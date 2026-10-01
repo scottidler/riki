@@ -10,6 +10,7 @@ use axum::{Json, Router};
 use riki_core::runtime::{
     Build, DeployedResponse, HealthResponse, ReadyResponse, Runtime, StatusResponse, VersionResponse,
 };
+use riki_core::wiki::Wiki;
 use tower_http::trace::TraceLayer;
 use tracing::debug;
 
@@ -25,11 +26,12 @@ const BUILD: Build = Build {
 #[derive(Debug, Clone)]
 pub struct AppState {
     runtime: Arc<Runtime>,
+    wiki: Arc<Wiki>,
 }
 
 impl AppState {
-    pub fn new(runtime: Arc<Runtime>) -> Self {
-        Self { runtime }
+    pub fn new(runtime: Arc<Runtime>, wiki: Arc<Wiki>) -> Self {
+        Self { runtime, wiki }
     }
 }
 
@@ -60,8 +62,9 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
 }
 
 async fn status(State(state): State<AppState>) -> Json<StatusResponse> {
-    debug!("status: rendering /status");
-    Json(riki_core::runtime::status(state.runtime.uptime_secs(), None))
+    let error = state.wiki.status_error();
+    debug!("status: error={error:?}");
+    Json(riki_core::runtime::status(state.runtime.uptime_secs(), error))
 }
 
 async fn deployed(State(state): State<AppState>) -> Json<DeployedResponse> {

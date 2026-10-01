@@ -5,10 +5,19 @@ edition.workspace = true
 authors.workspace = true
 description = "Framework-agnostic core for riki (must never depend on axum)"
 
+[features]
+# Test fixtures (local upstream bare repos built with git2) shared with the server's tests.
+testing = []
+
 [dependencies]
 chrono = "0.4"
+git2 = { version = "0.21", default-features = false }
 serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["process", "rt", "sync", "time"] }
 tracing = "0.1"
 
 [dev-dependencies]
 serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

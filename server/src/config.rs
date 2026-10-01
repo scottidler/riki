@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eyre::{Context, Result, eyre};
+use riki_core::store::StoreConfig;
 use serde::Deserialize;
 use tracing::debug;
 
@@ -133,6 +134,16 @@ impl Default for IdentityConfig {
 }
 
 impl Config {
+    /// The git store settings, in the shape `riki-core` takes.
+    pub fn store(&self) -> StoreConfig {
+        StoreConfig {
+            remote: self.content.remote.clone(),
+            branch: self.content.branch.clone(),
+            cache_dir: self.content.cache_dir.clone(),
+            timeout: self.git.timeout,
+        }
+    }
+
     /// Load the config at `path`, or at the XDG default when `path` is `None`. A missing or
     /// invalid file is an error: riki never starts on guessed settings.
     pub fn load(path: Option<&Path>) -> Result<Self> {

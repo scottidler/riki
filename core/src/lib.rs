@@ -1,3 +1,13 @@
 //! Framework-agnostic core for riki. Must not depend on axum; the `core-guard` otto task enforces it.
 
+pub mod index;
+pub mod path;
 pub mod runtime;
+pub mod store;
+pub mod wiki;
+
+/// Commit and blob ids, as used throughout riki-core's API.
+pub use git2::Oid;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;

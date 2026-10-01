@@ -89,3 +89,13 @@ fn shipped_example_loads() {
     let config = Config::from_yaml(example, Some(home())).expect("example loads");
     assert_eq!(config.listen.to_string(), DEFAULT_LISTEN);
 }
+
+#[test]
+fn store_config_carries_content_and_timeout() {
+    let yaml = format!("{MINIMAL}  branch: wiki\n  cache-dir: ~/c.git\ngit:\n  timeout: 5s\n");
+    let store = Config::from_yaml(&yaml, Some(home())).expect("loads").store();
+    assert_eq!(store.remote, "git@example.com:x/y.git");
+    assert_eq!(store.branch, "wiki");
+    assert_eq!(store.cache_dir, Path::new("/home/test/c.git"));
+    assert_eq!(store.timeout, Duration::from_secs(5));
+}
