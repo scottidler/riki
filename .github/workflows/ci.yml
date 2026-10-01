@@ -1,0 +1,19 @@
+name: CI
+
+# Thin caller: delegates Rust CI (otto ci) to the org's reusable workflow.
+# Source: scottidler/github-actions/.github/workflows/rust-ci.yml (pinned to v1).
+# Change the pipeline by editing the reusable workflow, not this file.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: scottidler/github-actions/.github/workflows/rust-ci.yml@v1
+    with:
+      rust-version: "1.98.0"

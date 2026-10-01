@@ -1,0 +1,21 @@
+name: Release
+
+# Thin caller: delegates the tag-driven CLI release to the org's reusable workflow.
+# Source: scottidler/github-actions/.github/workflows/rust-cli-release.yml (pinned to v1).
+# Cross-compiles linux amd64/arm64 + macOS x86_64/arm64, tarballs + sha256 each, and
+# publishes a GitHub Release. Change the pipeline by editing the reusable workflow.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: scottidler/github-actions/.github/workflows/rust-cli-release.yml@v1
+    with:
+      rust-version: "1.98.0"

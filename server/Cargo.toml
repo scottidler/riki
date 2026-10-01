@@ -1,0 +1,31 @@
+[package]
+name = "riki-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+build = "build.rs"
+description = "riki HTTP shell: config, routes, and process wiring"
+
+[[bin]]
+name = "riki"
+path = "src/main.rs"
+
+[dependencies]
+riki-core = { path = "../core" }
+axum = "0.8"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+dirs = "6"
+eyre = "0.6"
+humantime-serde = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

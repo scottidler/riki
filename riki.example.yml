@@ -1,0 +1,25 @@
+# riki config. Copy to ~/.config/riki/riki.yml (or pass `riki --config <path>`).
+# Keys are kebab-case; an unknown key anywhere fails startup. No secrets belong here: the
+# push credential comes from the host's git setup (deploy key wired by GIT_SSH_COMMAND).
+
+# Header identity requires a loopback listen address. 8080 is taken in homelab, so 8737.
+listen: 127.0.0.1:8737
+
+content:
+  remote: git@github.com:scottidler/<content-repo>.git   # required; the canonical content repo
+  branch: main
+  cache-dir: ~/.cache/riki/content.git                   # bare clone; `~` expands
+
+git:
+  timeout: 30s          # per git fetch/push call (humantime: 500ms, 30s, 2m)
+  poll-interval: 30s    # how often to fetch upstream
+  push-retries: 1       # non-fast-forward retries on save before a 409
+
+committer:              # git committer; the author is always the editing user
+  name: riki
+  email: riki@localhost
+
+identity:
+  mode: header
+  email-header: Remote-Email   # required on writes
+  name-header: Remote-Name     # optional; falls back to the email

@@ -1,0 +1,96 @@
+otto:
+  api: 1
+  tasks: [ci]
+  envs:
+    VERSION: "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+
+tasks:
+  lint:
+    help: "Run whitespace and convention linting"
+    bash: |
+      whitespace -r
+      echo ""
+      echo "=== Deny _variable binding pattern ==="
+      if grep -rn --include='*.rs' -P '(\blet\s+(mut\s+)?|[(,]\s*|\|\s*|\bfor\s+)_[a-zA-Z]' core/src server/src; then
+        echo ""
+        echo "ERROR: found _variable binding pattern."
+        echo "Use _ to discard or use the variable, never _varname."
+        exit 1
+      fi
+      echo "=== No _variable patterns found ==="
+
+  bloat:
+    help: "Fail if any source file exceeds BLOAT_MAX_LINES (default 1500)"
+    bash: |
+      LIMIT="${BLOAT_MAX_LINES:-1500}"
+      FAILED=0
+      echo "=== Checking file line counts (limit: $LIMIT) ==="
+      while IFS= read -r file; do
+        lines=$(wc -l < "$file")
+        if [ "$lines" -gt "$LIMIT" ]; then
+          echo "  FAIL: $file ($lines lines, +$((lines - LIMIT)) over limit)"
+          FAILED=1
+        fi
+      done < <(find . -type f \( -name "*.rs" -o -name "*.py" -o -name "*.js" -o -name "*.ts" \) \
+        -not -path "*/target/*" \
+        -not -path "*/node_modules/*" \
+        -not -path "*/.git/*")
+      if [ "$FAILED" -eq 1 ]; then
+        echo "Decompose these files into modules before proceeding."
+        exit 1
+      fi
+      echo "All files within $LIMIT line limit"
+
+  check:
+    help: "Run all quality checks (compile, clippy, format)"
+    bash: |
+      echo "=== Checking compilation ==="
+      cargo check --workspace --all-targets --all-features
+      echo ""
+      echo "=== Running Clippy ==="
+      cargo clippy --workspace --all-targets --all-features -- -D warnings
+      echo ""
+      echo "=== Checking format ==="
+      cargo fmt --all --check
+      echo ""
+      echo "=== All checks passed! ==="
+
+  test:
+    help: "Run all tests"
+    bash: |
+      cargo test --workspace --all-features
+
+  core-guard:
+    help: "Fail if riki-core acquires an axum dependency (core must stay framework-agnostic; HTTP handlers belong in the server)"
+    bash: |
+      # `cargo tree -i` inverts the graph: it lists what depends on axum within the -p package.
+      # No package printed = core does not pull axum in, by any path, dev-dependencies included.
+      if cargo tree -p riki-core -i axum >/dev/null 2>&1; then
+        echo "ERROR: riki-core now depends on axum." >&2
+        cargo tree -p riki-core -i axum >&2
+        exit 1
+      fi
+      echo "=== riki-core is still axum-free (OK) ==="
+
+  ci:
+    help: "Full CI pipeline (lint + bloat + check + test + core-guard in parallel)"
+    before: [lint, bloat, check, test, core-guard]
+    bash: |
+      echo "=== All CI checks passed! ==="
+
+  build:
+    help: "Build release binary"
+    bash: |
+      cargo build --release
+      echo "=== Release build complete ==="
+
+  run:
+    help: "Run the server (config from ~/.config/riki/riki.yml)"
+    bash: |
+      cargo run -p riki-server
+
+  clean:
+    help: "Clean build artifacts"
+    bash: |
+      cargo clean
+      echo "=== Build artifacts cleaned ==="
