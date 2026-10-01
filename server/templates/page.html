@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ - riki</title>
+<style>
+body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #1f2328; display: flex; flex-direction: column; min-height: 100vh; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 1.5rem; border-bottom: 1px solid #d0d7de; }
+header a.brand { font-weight: 600; color: inherit; text-decoration: none; }
+.banner { padding: 0.6rem 1.5rem; background: #fff8c5; border-bottom: 1px solid #d4a72c; }
+.banner.error { background: #ffebe9; border-color: #cf222e; }
+.layout { display: flex; flex: 1; }
+nav { width: 16rem; padding: 1rem 1.5rem; border-right: 1px solid #d0d7de; }
+nav ul { list-style: none; margin: 0; padding-left: 1rem; }
+nav > ul { padding-left: 0; }
+nav a.current { font-weight: 600; }
+main { flex: 1; max-width: 52rem; padding: 1rem 2rem; }
+pre, code { background: #f6f8fa; border-radius: 4px; }
+pre { padding: 0.8rem; overflow-x: auto; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #d0d7de; padding: 0.3rem 0.6rem; }
+img { max-width: 100%; }
+.markdown-alert { padding: 0.5rem 1rem; margin: 1rem 0; border-left: 4px solid #0969da; background: #f6f8fa; }
+.markdown-alert-title { font-weight: 600; margin: 0; }
+.markdown-alert-tip { border-color: #1a7f37; }
+.markdown-alert-important { border-color: #8250df; }
+.markdown-alert-warning { border-color: #9a6700; }
+.markdown-alert-caution { border-color: #cf222e; }
+</style>
+</head>
+<body>
+<header><a class="brand" href="/">riki</a><div class="actions">__ACTION__</div></header>
+__BANNERS__
+<div class="layout">
+<nav>__SIDEBAR__</nav>
+<main><article>__BODY__</article></main>
+</div>
+</body>
+</html>

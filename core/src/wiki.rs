@@ -22,6 +22,13 @@ pub struct Unreachable {
     pub error: String,
 }
 
+impl Unreachable {
+    /// `since` as RFC 3339 to the second, the form the banner and `/status` both show.
+    pub fn since_text(&self) -> String {
+        self.since.to_rfc3339_opts(SecondsFormat::Secs, true)
+    }
+}
+
 /// The newest tip failed publish with these index errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected {
@@ -108,7 +115,7 @@ impl Wiki {
         if let Some(down) = &health.unreachable {
             parts.push(format!(
                 "upstream unreachable since {}: {}",
-                down.since.to_rfc3339_opts(SecondsFormat::Secs, true),
+                down.since_text(),
                 down.error
             ));
         }

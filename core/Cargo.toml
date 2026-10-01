@@ -11,6 +11,7 @@ testing = []
 
 [dependencies]
 chrono = "0.4"
+comrak = { version = "0.55", default-features = false }
 git2 = { version = "0.21", default-features = false }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

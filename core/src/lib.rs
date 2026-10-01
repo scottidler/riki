@@ -2,6 +2,7 @@
 
 pub mod index;
 pub mod path;
+pub mod render;
 pub mod runtime;
 pub mod store;
 pub mod wiki;

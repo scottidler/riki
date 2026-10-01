@@ -3,7 +3,9 @@
 pub mod cli;
 pub mod config;
 pub mod observability;
+pub mod pages;
 pub mod poller;
+pub mod render;
 pub mod routes;
 
 use std::sync::Arc;

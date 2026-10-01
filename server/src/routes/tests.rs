@@ -121,15 +121,3 @@ async fn status_is_degraded_while_upstream_is_unreachable_then_recovers() {
     assert_eq!(keys(&status), "status,uptime");
     assert_eq!(status["status"], "ok");
 }
-
-#[tokio::test]
-async fn unknown_path_is_404_until_the_page_route_lands() {
-    let fx = healthy().await;
-    let wiki = fx.wiki.clone();
-    let app = router(AppState::new(Arc::new(Runtime::new()), wiki));
-    let response = app
-        .oneshot(Request::get("/nope").body(Body::empty()).expect("request"))
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-}

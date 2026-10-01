@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use riki_core::Oid;
 use riki_core::store::StoreConfig;
-use riki_core::testing::{commit_files, file_url, init_upstream};
+use riki_core::testing::{commit, commit_files, file_url, init_upstream};
 use riki_core::wiki::Wiki;
 use tempfile::TempDir;
 
@@ -27,6 +27,11 @@ impl Upstream {
 
     pub fn push(&self, files: &[(&str, &str)]) -> Oid {
         commit_files(&self.dir, BRANCH, files, "push")
+    }
+
+    pub fn push_bytes(&self, files: &[(&str, &[u8])]) -> Oid {
+        let files: Vec<(&str, Option<&[u8]>)> = files.iter().map(|(p, c)| (*p, Some(*c))).collect();
+        commit(&self.dir, BRANCH, &files, "push")
     }
 
     pub fn store_config(&self) -> StoreConfig {

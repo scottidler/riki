@@ -14,6 +14,8 @@ use riki_core::wiki::Wiki;
 use tower_http::trace::TraceLayer;
 use tracing::debug;
 
+use crate::pages;
+
 /// Compile-time git facts from this crate's `build.rs` (`env!` must resolve in the crate whose
 /// build script sets it, never in core).
 const BUILD: Build = Build {
@@ -25,8 +27,8 @@ const BUILD: Build = Build {
 
 #[derive(Debug, Clone)]
 pub struct AppState {
-    runtime: Arc<Runtime>,
-    wiki: Arc<Wiki>,
+    pub(crate) runtime: Arc<Runtime>,
+    pub(crate) wiki: Arc<Wiki>,
 }
 
 impl AppState {
@@ -35,7 +37,8 @@ impl AppState {
     }
 }
 
-/// Reserved routes. Phase 3 mounts the page catch-all after these.
+/// Reserved routes first, then the page catch-all. axum picks the most specific match, so content
+/// can never shadow a reserved route (the nav index also refuses reserved names).
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -43,6 +46,9 @@ pub fn router(state: AppState) -> Router {
         .route("/status", get(status))
         .route("/deployed", get(deployed))
         .route("/version", get(version))
+        .route("/_riki/raw/{*path}", get(pages::raw))
+        .route("/", get(pages::root))
+        .route("/{*path}", get(pages::page))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
