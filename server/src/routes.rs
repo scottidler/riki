@@ -14,7 +14,8 @@ use riki_core::wiki::Wiki;
 use tower_http::trace::TraceLayer;
 use tracing::debug;
 
-use crate::pages;
+use crate::config::IdentityConfig;
+use crate::{api, pages};
 
 /// Compile-time git facts from this crate's `build.rs` (`env!` must resolve in the crate whose
 /// build script sets it, never in core).
@@ -29,11 +30,22 @@ const BUILD: Build = Build {
 pub struct AppState {
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) wiki: Arc<Wiki>,
+    pub(crate) identity: Arc<IdentityConfig>,
 }
 
 impl AppState {
     pub fn new(runtime: Arc<Runtime>, wiki: Arc<Wiki>) -> Self {
-        Self { runtime, wiki }
+        Self {
+            runtime,
+            wiki,
+            identity: Arc::new(IdentityConfig::default()),
+        }
+    }
+
+    /// Use the configured identity headers instead of the defaults.
+    pub fn with_identity(mut self, identity: IdentityConfig) -> Self {
+        self.identity = Arc::new(identity);
+        self
     }
 }
 
@@ -47,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/deployed", get(deployed))
         .route("/version", get(version))
         .route("/_riki/raw/{*path}", get(pages::raw))
+        .merge(api::router())
         .route("/", get(pages::root))
         .route("/{*path}", get(pages::page))
         .layer(TraceLayer::new_for_http())

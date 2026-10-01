@@ -1,7 +1,9 @@
 //! riki's HTTP shell: config, routes, and process wiring over `riki-core`.
 
+pub mod api;
 pub mod cli;
 pub mod config;
+pub mod identity;
 pub mod observability;
 pub mod pages;
 pub mod poller;
@@ -38,7 +40,7 @@ pub async fn run(config: Config) -> Result<()> {
     );
     poller::poll_once(&wiki).await;
     let poller = poller::spawn(wiki.clone(), config.git.poll_interval);
-    let app = routes::router(routes::AppState::new(runtime.clone(), wiki));
+    let app = routes::router(routes::AppState::new(runtime.clone(), wiki).with_identity(config.identity));
     runtime.mark_ready();
     info!("riki listening on {}", listener.local_addr()?);
     let served = axum::serve(listener, app)

@@ -99,3 +99,20 @@ fn store_config_carries_content_and_timeout() {
     assert_eq!(store.cache_dir, Path::new("/home/test/c.git"));
     assert_eq!(store.timeout, Duration::from_secs(5));
 }
+
+#[test]
+fn header_mode_refuses_a_non_loopback_listen() {
+    let yaml = format!("listen: 0.0.0.0:8737\n{MINIMAL}");
+    let err = Config::from_yaml(&yaml, Some(home())).expect_err("must fail");
+    let text = format!("{err:#}");
+    assert!(text.contains("requires a loopback"), "{text}");
+    assert!(text.contains("0.0.0.0:8737"), "{text}");
+}
+
+#[test]
+fn header_mode_accepts_loopback_v4_and_v6() {
+    for listen in ["127.0.0.1:8737", "127.9.9.9:1", "[::1]:8737"] {
+        let yaml = format!("listen: '{listen}'\n{MINIMAL}");
+        Config::from_yaml(&yaml, Some(home())).unwrap_or_else(|e| panic!("{listen}: {e:#}"));
+    }
+}

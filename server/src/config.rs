@@ -161,7 +161,21 @@ impl Config {
     pub fn from_yaml(text: &str, home: Option<&Path>) -> Result<Self> {
         let mut config: Config = serde_yaml::from_str(text)?;
         config.content.cache_dir = expand_tilde(&config.content.cache_dir, home)?;
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Cross-field rules a single key cannot express. Header identity trusts whatever the
+    /// identity headers say, so only a loopback listener (the local edge) may receive requests.
+    pub fn validate(&self) -> Result<()> {
+        match self.identity.mode {
+            IdentityMode::Header if !self.listen.ip().is_loopback() => Err(eyre!(
+                "identity.mode `header` requires a loopback `listen` address (127.0.0.0/8 or ::1), got {}: \
+                 a non-loopback listener would trust forgeable identity headers",
+                self.listen
+            )),
+            IdentityMode::Header => Ok(()),
+        }
     }
 }
 
