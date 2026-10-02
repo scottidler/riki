@@ -121,3 +121,16 @@ async fn status_is_degraded_while_upstream_is_unreachable_then_recovers() {
     assert_eq!(keys(&status), "status,uptime");
     assert_eq!(status["status"], "ok");
 }
+
+#[test]
+fn save_settings_come_from_the_committer_and_git_config() {
+    let config = crate::config::Config::from_yaml(
+        "content:\n  remote: x\ngit:\n  push-retries: 3\ncommitter:\n  name: bot\n  email: bot@example.com\n",
+        Some(std::path::Path::new("/home/test")),
+    )
+    .expect("loads");
+    let settings = save_settings(&config.committer, &config.git);
+    assert_eq!(settings.committer.name, "bot");
+    assert_eq!(settings.committer.email, "bot@example.com");
+    assert_eq!(settings.push_retries, 3);
+}

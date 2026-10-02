@@ -10,11 +10,13 @@ use axum::{Json, Router};
 use riki_core::runtime::{
     Build, DeployedResponse, HealthResponse, ReadyResponse, Runtime, StatusResponse, VersionResponse,
 };
+use riki_core::save::SaveSettings;
+use riki_core::store::Signer;
 use riki_core::wiki::Wiki;
 use tower_http::trace::TraceLayer;
 use tracing::debug;
 
-use crate::config::IdentityConfig;
+use crate::config::{CommitterConfig, GitConfig, IdentityConfig};
 use crate::{api, pages};
 
 /// Compile-time git facts from this crate's `build.rs` (`env!` must resolve in the crate whose
@@ -31,6 +33,7 @@ pub struct AppState {
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) wiki: Arc<Wiki>,
     pub(crate) identity: Arc<IdentityConfig>,
+    pub(crate) save: Arc<SaveSettings>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             runtime,
             wiki,
             identity: Arc::new(IdentityConfig::default()),
+            save: Arc::new(save_settings(&CommitterConfig::default(), &GitConfig::default())),
         }
     }
 
@@ -46,6 +50,23 @@ impl AppState {
     pub fn with_identity(mut self, identity: IdentityConfig) -> Self {
         self.identity = Arc::new(identity);
         self
+    }
+
+    /// Use these save settings instead of the defaults.
+    pub fn with_save(mut self, save: SaveSettings) -> Self {
+        self.save = Arc::new(save);
+        self
+    }
+}
+
+/// The save settings `riki-core` takes, from the `committer` and `git` config sections.
+pub fn save_settings(committer: &CommitterConfig, git: &GitConfig) -> SaveSettings {
+    SaveSettings {
+        committer: Signer {
+            name: committer.name.clone(),
+            email: committer.email.clone(),
+        },
+        push_retries: git.push_retries,
     }
 }
 

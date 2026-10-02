@@ -62,3 +62,50 @@ pub fn commit_files(dir: &Path, branch: &str, files: &[(&str, &str)], message: &
 pub fn file_url(dir: &Path) -> String {
     format!("file://{}", dir.display())
 }
+
+/// The commit `refs/heads/<branch>` points at in the bare repo at `dir`, if any.
+pub fn head(dir: &Path, branch: &str) -> Option<Oid> {
+    let repo = Repository::open_bare(dir).expect("open repo");
+    repo.refname_to_id(&format!("refs/heads/{branch}")).ok()
+}
+
+/// How many commits `refs/heads/<branch>` has, following first parents.
+pub fn history_len(dir: &Path, branch: &str) -> usize {
+    let repo = Repository::open_bare(dir).expect("open repo");
+    let mut walk = repo.revwalk().expect("revwalk");
+    walk.push_ref(&format!("refs/heads/{branch}")).expect("push ref");
+    walk.count()
+}
+
+/// The bytes of `path` at `refs/heads/<branch>` in the bare repo at `dir`, if present.
+pub fn file_at(dir: &Path, branch: &str, path: &str) -> Option<Vec<u8>> {
+    let repo = Repository::open_bare(dir).expect("open repo");
+    let commit = repo.find_commit(head(dir, branch)?).expect("head commit");
+    let entry = commit.tree().expect("tree").get_path(Path::new(path)).ok()?;
+    Some(repo.find_blob(entry.id()).expect("blob").content().to_vec())
+}
+
+/// The author email of the commit at `refs/heads/<branch>`.
+pub fn head_author_email(dir: &Path, branch: &str) -> String {
+    let repo = Repository::open_bare(dir).expect("open repo");
+    let commit = repo.find_commit(head(dir, branch).expect("head")).expect("commit");
+    commit.author().email().expect("utf-8 email").to_string()
+}
+
+/// Make the bare clone at `clone_dir` run `program` instead of `git-receive-pack` on the remote
+/// side of a push (`remote.origin.receivepack`). Over a `file://` remote git runs it through the
+/// shell with the remote path appended, so a test can stall or fail a push without any network.
+pub fn set_receive_pack(clone_dir: &Path, program: &Path) {
+    let repo = Repository::open_bare(clone_dir).expect("open clone");
+    repo.config()
+        .expect("config")
+        .set_str("remote.origin.receivepack", &program.display().to_string())
+        .expect("set receivepack");
+}
+
+/// Write an executable `/bin/sh` script.
+pub fn write_script(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
+}

@@ -1,9 +1,11 @@
 //! Framework-agnostic core for riki. Must not depend on axum; the `core-guard` otto task enforces it.
 
 pub mod index;
+pub mod page;
 pub mod path;
 pub mod render;
 pub mod runtime;
+pub mod save;
 pub mod store;
 pub mod wiki;
 

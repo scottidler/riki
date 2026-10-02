@@ -6,10 +6,11 @@
 //! ref lock files. Reads take no lock.
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use std::time::Duration;
 
-use git2::{ErrorCode, ObjectType, Oid, Repository, TreeWalkMode, TreeWalkResult};
+use git2::build::TreeUpdateBuilder;
+use git2::{ErrorCode, FileMode, ObjectType, Oid, Repository, Signature, TreeWalkMode, TreeWalkResult};
 use thiserror::Error;
 use tokio::process::Command;
 use tokio::sync::{Mutex, MutexGuard};
@@ -50,6 +51,38 @@ pub struct StoreConfig {
     pub branch: String,
     pub cache_dir: PathBuf,
     pub timeout: Duration,
+}
+
+/// A git author or committer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signer {
+    pub name: String,
+    pub email: String,
+}
+
+/// One file change on top of a parent commit, as a new commit object (no ref moves).
+#[derive(Debug, Clone)]
+pub struct FileCommit<'a> {
+    pub parent: Oid,
+    pub path: &'a str,
+    pub contents: &'a [u8],
+    pub author: &'a Signer,
+    pub committer: &'a Signer,
+    pub message: &'a str,
+}
+
+/// What a push that git completed did. A timeout is `StoreError::Timeout`; any other failure
+/// (transport, auth, a remote-side rejection such as a protected branch) is `StoreError::Failed`
+/// carrying git's stderr.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushOutcome {
+    Pushed,
+    /// The remote branch moved: porcelain `!` with `(fetch first)` or `(non-fast-forward)`, or
+    /// `(incorrect old value provided)` when a concurrent push moved it between the remote's ref
+    /// advertisement and its ref update.
+    NonFastForward {
+        line: String,
+    },
 }
 
 /// Proof that the caller holds the repo mutex. Network and ref-writing calls require one, so a
@@ -110,6 +143,59 @@ impl GitStore {
         run(command, "git fetch", self.timeout).await.map(|_| ())
     }
 
+    /// `git push --porcelain origin <commit>:refs/heads/<branch>` under the held mutex, bounded by
+    /// `git.timeout`.
+    pub async fn push(&self, guard: &RepoGuard<'_>, commit: Oid) -> Result<PushOutcome, StoreError> {
+        let _ = guard;
+        let mut command = Command::new("git");
+        command
+            .arg("--git-dir")
+            .arg(&self.dir)
+            .args(["push", "--porcelain", REMOTE])
+            .arg(format!("{commit}:refs/heads/{}", self.branch));
+        let output = run_output(command, "git push", self.timeout).await?;
+        let outcome = classify_push(&output);
+        info!("GitStore::push: {commit} -> {outcome:?}");
+        outcome
+    }
+
+    /// Point `refs/remotes/origin/<branch>` at `commit` (after a push landed it), under the held
+    /// mutex.
+    pub async fn set_tip(&self, guard: &RepoGuard<'_>, commit: Oid) -> Result<(), StoreError> {
+        let _ = guard;
+        let name = tracking_ref(&self.branch);
+        info!("GitStore::set_tip: {name} -> {commit}");
+        self.blocking(move |repo| {
+            repo.reference(&name, commit, true, "riki: push")?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Write `change` as a blob, a tree, and a commit object. Moves no ref, so it needs no lock.
+    pub async fn commit_file(&self, change: FileCommit<'_>) -> Result<Oid, StoreError> {
+        path::validate(change.path)?;
+        let parent = change.parent;
+        let path = change.path.to_string();
+        let contents = change.contents.to_vec();
+        let author = change.author.clone();
+        let committer = change.committer.clone();
+        let message = change.message.to_string();
+        self.blocking(move |repo| {
+            let parent = repo.find_commit(parent)?;
+            let blob = repo.blob(&contents)?;
+            let mut update = TreeUpdateBuilder::new();
+            update.upsert(path.as_str(), blob, FileMode::Blob);
+            let tree = repo.find_tree(update.create_updated(repo, &parent.tree()?)?)?;
+            let author = Signature::now(&author.name, &author.email)?;
+            let committer = Signature::now(&committer.name, &committer.email)?;
+            let commit = repo.commit(None, &author, &committer, &message, &tree, &[&parent])?;
+            debug!("commit_file: {path} blob={blob} commit={commit}");
+            Ok(commit)
+        })
+        .await
+    }
+
     /// The tip: the commit at `refs/remotes/origin/<branch>`, or `None` before the first fetch.
     pub async fn tip(&self) -> Result<Option<Oid>, StoreError> {
         let name = tracking_ref(&self.branch);
@@ -153,6 +239,12 @@ impl GitStore {
     /// The blob at `path` in `commit`, or `None` when the path is absent or not a file. The path
     /// is validated first; a bad path is a typed error.
     pub async fn read_blob(&self, commit: Oid, path: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(self.blob_at(commit, path).await?.map(|(_, bytes)| bytes))
+    }
+
+    /// The blob at `path` in `commit` with its oid, or `None` when the path is absent or not a
+    /// file. The path is validated first; a bad path is a typed error.
+    pub async fn blob_at(&self, commit: Oid, path: &str) -> Result<Option<(Oid, Vec<u8>)>, StoreError> {
         path::validate(path)?;
         let path = path.to_string();
         self.blocking(move |repo| {
@@ -165,7 +257,17 @@ impl GitStore {
             if entry.kind() != Some(ObjectType::Blob) {
                 return Ok(None);
             }
-            Ok(Some(repo.find_blob(entry.id())?.content().to_vec()))
+            Ok(Some((entry.id(), repo.find_blob(entry.id())?.content().to_vec())))
+        })
+        .await
+    }
+
+    /// The blob with id `oid`, or `None` when the object DB has no such blob.
+    pub async fn blob(&self, oid: Oid) -> Result<Option<Vec<u8>>, StoreError> {
+        self.blocking(move |repo| match repo.find_blob(oid) {
+            Ok(blob) => Ok(Some(blob.content().to_vec())),
+            Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
         })
         .await
     }
@@ -221,8 +323,19 @@ fn configure(dir: &Path, remote: &str, refspec: &str) -> Result<(), StoreError> 
 /// Run a command with a timeout: `kill_on_drop` so a timed-out child dies with its future, stdout
 /// and stderr drained concurrently by `wait_with_output`, and the prompt for credentials disabled
 /// so a missing credential fails instead of hanging until the timeout. Returns stdout.
-pub(crate) async fn run(mut command: Command, label: &str, timeout: Duration) -> Result<Vec<u8>, StoreError> {
-    debug!("run: {label} timeout={timeout:?}");
+pub(crate) async fn run(command: Command, label: &str, timeout: Duration) -> Result<Vec<u8>, StoreError> {
+    let output = run_output(command, label, timeout).await?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(failed(label, &output, ""))
+    }
+}
+
+/// [`run`], but a non-zero exit is returned as the output rather than an error, for callers that
+/// read stdout on failure (`git push --porcelain`).
+async fn run_output(mut command: Command, label: &str, timeout: Duration) -> Result<Output, StoreError> {
+    debug!("run_output: {label} timeout={timeout:?}");
     command
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
@@ -230,23 +343,47 @@ pub(crate) async fn run(mut command: Command, label: &str, timeout: Duration) ->
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let child = command.spawn()?;
-    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(output) => output?,
-        Err(_) => {
-            return Err(StoreError::Timeout {
-                command: label.to_string(),
-                timeout,
-            });
-        }
-    };
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(StoreError::Failed {
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(output) => Ok(output?),
+        Err(_) => Err(StoreError::Timeout {
             command: label.to_string(),
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        })
+            timeout,
+        }),
+    }
+}
+
+fn failed(label: &str, output: &Output, prefix: &str) -> StoreError {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    StoreError::Failed {
+        command: label.to_string(),
+        code: output.status.code(),
+        stderr: if prefix.is_empty() {
+            stderr
+        } else {
+            format!("{prefix}\n{stderr}")
+        },
+    }
+}
+
+/// Porcelain rejection reasons that mean "the remote branch moved": retry from a fresh fetch.
+const MOVED_REASONS: &[&str] = &["(fetch first)", "(non-fast-forward)", "(incorrect old value provided)"];
+
+/// Read a finished `git push --porcelain`. Exit 0 is pushed. A `!` ref line with one of
+/// [`MOVED_REASONS`] is a non-fast-forward rejection. Anything else (a `!`
+/// line with another reason, or no ref line at all: transport failure, exit 128) is a failure
+/// carrying git's stderr, prefixed with the `!` line when there is one.
+fn classify_push(output: &Output) -> Result<PushOutcome, StoreError> {
+    if output.status.success() {
+        return Ok(PushOutcome::Pushed);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rejected = stdout.lines().find(|line| line.starts_with('!'));
+    match rejected {
+        Some(line) if MOVED_REASONS.iter().any(|reason| line.contains(reason)) => {
+            Ok(PushOutcome::NonFastForward { line: line.to_string() })
+        }
+        Some(line) => Err(failed("git push", output, line)),
+        None => Err(failed("git push", output, "")),
     }
 }
 

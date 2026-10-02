@@ -40,7 +40,11 @@ pub async fn run(config: Config) -> Result<()> {
     );
     poller::poll_once(&wiki).await;
     let poller = poller::spawn(wiki.clone(), config.git.poll_interval);
-    let app = routes::router(routes::AppState::new(runtime.clone(), wiki).with_identity(config.identity));
+    let save = routes::save_settings(&config.committer, &config.git);
+    let state = routes::AppState::new(runtime.clone(), wiki)
+        .with_identity(config.identity)
+        .with_save(save);
+    let app = routes::router(state);
     runtime.mark_ready();
     info!("riki listening on {}", listener.local_addr()?);
     let served = axum::serve(listener, app)

@@ -171,3 +171,155 @@ async fn run_reports_exit_code_and_stderr() {
         other => panic!("expected Failed, got {other:?}"),
     }
 }
+
+fn output(code: i32, stdout: &str, stderr: &str) -> Output {
+    use std::os::unix::process::ExitStatusExt;
+    Output {
+        status: std::process::ExitStatus::from_raw(code << 8),
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn classify_push_reads_phase_0b_outputs() {
+    let pushed = output(
+        0,
+        "To github.com:x/y.git\n \td0b1:refs/heads/main\taf97..d0b1\nDone\n",
+        "",
+    );
+    assert_eq!(classify_push(&pushed).expect("pushed"), PushOutcome::Pushed);
+    let fetch_first = output(
+        1,
+        "To github.com:x/y.git\n!\t599f:refs/heads/main\t[rejected] (fetch first)\nDone\n",
+        "error: failed to push some refs",
+    );
+    assert!(matches!(
+        classify_push(&fetch_first),
+        Ok(PushOutcome::NonFastForward { line }) if line.contains("(fetch first)")
+    ));
+    let non_ff = output(1, "!\t599f:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n", "");
+    assert!(matches!(classify_push(&non_ff), Ok(PushOutcome::NonFastForward { .. })));
+    // Observed with two replicas pushing at once to a local upstream (git 2.53): the loser's
+    // receive-pack ref update finds the branch already moved.
+    let lost_race = output(
+        1,
+        "!\te1b0:refs/heads/main\t[remote rejected] (incorrect old value provided)\nDone\n",
+        "error: failed to push some refs",
+    );
+    assert!(matches!(
+        classify_push(&lost_race),
+        Ok(PushOutcome::NonFastForward { .. })
+    ));
+}
+
+#[test]
+fn classify_push_fails_transport_and_other_rejections_with_stderr() {
+    let transport = output(128, "", "fatal: Could not read from remote repository.");
+    match classify_push(&transport) {
+        Err(StoreError::Failed { code, stderr, .. }) => {
+            assert_eq!(code, Some(128));
+            assert_eq!(stderr, "fatal: Could not read from remote repository.");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    let protected = output(
+        1,
+        "!\tabc:refs/heads/main\t[remote rejected] (protected branch hook declined)\nDone\n",
+        "remote: error: GH006: Protected branch update failed",
+    );
+    match classify_push(&protected) {
+        Err(StoreError::Failed { stderr, .. }) => {
+            assert!(stderr.contains("protected branch hook declined"), "{stderr}");
+            assert!(stderr.contains("GH006"), "{stderr}");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}
+
+fn signer(name: &str) -> Signer {
+    Signer {
+        name: name.to_string(),
+        email: format!("{name}@example.com"),
+    }
+}
+
+#[tokio::test]
+async fn commit_file_then_push_lands_upstream_and_set_tip_moves_the_tracking_ref() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    let guard = store.lock().await;
+    store.fetch(&guard).await.expect("fetch");
+    let (author, committer) = (signer("alice"), signer("riki"));
+    let commit = store
+        .commit_file(FileCommit {
+            parent: seed,
+            path: "a/b/c.md",
+            contents: b"nested\n",
+            author: &author,
+            committer: &committer,
+            message: "riki: edit a/b/c.md",
+        })
+        .await
+        .expect("commit");
+    assert_eq!(store.tip().await.expect("tip"), Some(seed), "commit_file moves no ref");
+    assert_eq!(store.push(&guard, commit).await.expect("push"), PushOutcome::Pushed);
+    assert_eq!(crate::testing::head(&up, BRANCH), Some(commit));
+    assert_eq!(crate::testing::head_author_email(&up, BRANCH), "alice@example.com");
+    store.set_tip(&guard, commit).await.expect("set tip");
+    assert_eq!(store.tip().await.expect("tip"), Some(commit));
+    let (oid, bytes) = store.blob_at(commit, "a/b/c.md").await.expect("read").expect("present");
+    assert_eq!(bytes, b"nested\n");
+    assert_eq!(store.blob(oid).await.expect("blob"), Some(b"nested\n".to_vec()));
+    assert_eq!(store.blob(Oid::ZERO_SHA1).await.expect("blob"), None);
+}
+
+#[tokio::test]
+async fn push_behind_upstream_is_non_fast_forward() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    let guard = store.lock().await;
+    store.fetch(&guard).await.expect("fetch");
+    commit_files(&up, BRANCH, &[("other.md", "laptop\n")], "laptop");
+    let (author, committer) = (signer("alice"), signer("riki"));
+    let commit = store
+        .commit_file(FileCommit {
+            parent: seed,
+            path: "mine.md",
+            contents: b"mine\n",
+            author: &author,
+            committer: &committer,
+            message: "m",
+        })
+        .await
+        .expect("commit");
+    assert!(matches!(
+        store.push(&guard, commit).await,
+        Ok(PushOutcome::NonFastForward { .. })
+    ));
+}
+
+#[tokio::test]
+async fn commit_file_rejects_bad_paths() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let who = signer("alice");
+    let result = store
+        .commit_file(FileCommit {
+            parent: seed,
+            path: "a\0.md",
+            contents: b"x",
+            author: &who,
+            committer: &who,
+            message: "m",
+        })
+        .await;
+    assert!(matches!(result, Err(StoreError::Path(PathError::Nul(_)))));
+}
