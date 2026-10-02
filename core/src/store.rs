@@ -10,7 +10,10 @@ use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use git2::build::TreeUpdateBuilder;
-use git2::{ErrorCode, FileMode, ObjectType, Oid, Repository, Signature, TreeWalkMode, TreeWalkResult};
+use git2::{
+    Commit, Delta, DiffFindOptions, ErrorCode, FileMode, ObjectType, Oid, Repository, Signature, TreeWalkMode,
+    TreeWalkResult,
+};
 use thiserror::Error;
 use tokio::process::Command;
 use tokio::sync::{Mutex, MutexGuard};
@@ -94,6 +97,24 @@ pub struct CommitInfo {
     pub parents: Vec<Oid>,
     /// The first line of the message, lossily decoded.
     pub summary: String,
+}
+
+/// One exact rename (`R100`) between a commit and its first parent, as file paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rename {
+    pub from: String,
+    pub to: String,
+}
+
+/// The exact renames on a commit's first-parent chain, oldest commit first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameWalk {
+    /// Whether the walk stopped at the requested `since` commit. `false` means `since` is not on
+    /// the chain (or none was given), so `renames` covers the whole history.
+    pub reached_since: bool,
+    /// How many commits the walk diffed.
+    pub commits: usize,
+    pub renames: Vec<Rename>,
 }
 
 /// What a push that git completed did. A timeout is `StoreError::Timeout`; any other failure
@@ -362,6 +383,43 @@ impl GitStore {
             .await
     }
 
+    /// Walk `commit`'s first-parent chain back to `since` (exclusive), or to the root when `since`
+    /// is `None` or not on the chain, and collect each commit's exact renames against its first
+    /// parent, oldest first. One blocking task for the whole walk. Paths that are not UTF-8 are
+    /// skipped (they are never pages).
+    pub async fn first_parent_renames(&self, commit: Oid, since: Option<Oid>) -> Result<RenameWalk, StoreError> {
+        self.blocking(move |repo| {
+            let mut walk = repo.revwalk()?;
+            walk.simplify_first_parent()?;
+            walk.push(commit)?;
+            let mut chain = Vec::new();
+            let mut reached_since = false;
+            for oid in walk {
+                let oid = oid?;
+                if Some(oid) == since {
+                    reached_since = true;
+                    break;
+                }
+                chain.push(oid);
+            }
+            let mut renames = Vec::new();
+            for oid in chain.iter().rev() {
+                renames.extend(exact_renames(repo, &repo.find_commit(*oid)?)?);
+            }
+            debug!(
+                "first_parent_renames: {commit} since={since:?} reached={reached_since} commits={} renames={}",
+                chain.len(),
+                renames.len()
+            );
+            Ok(RenameWalk {
+                reached_since,
+                commits: chain.len(),
+                renames,
+            })
+        })
+        .await
+    }
+
     /// The blobs at `files` in `commit`, in one blocking task, as `(file, bytes)`. Files that are
     /// absent or not blobs are left out. Every path is validated first.
     pub async fn read_blobs(&self, commit: Oid, files: Vec<String>) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
@@ -405,6 +463,30 @@ impl GitStore {
         let dir = self.dir.clone();
         tokio::task::spawn_blocking(move || work(&Repository::open_bare(&dir)?)).await?
     }
+}
+
+/// `commit`'s exact renames against its first parent; none for a root commit.
+fn exact_renames(repo: &Repository, commit: &Commit<'_>) -> Result<Vec<Rename>, StoreError> {
+    if commit.parent_count() == 0 {
+        return Ok(Vec::new());
+    }
+    let parent = commit.parent(0)?;
+    let mut diff = repo.diff_tree_to_tree(Some(&parent.tree()?), Some(&commit.tree()?), None)?;
+    let mut find = DiffFindOptions::new();
+    find.renames(true).exact_match_only(true);
+    diff.find_similar(Some(&mut find))?;
+    Ok(diff
+        .deltas()
+        .filter(|delta| delta.status() == Delta::Renamed)
+        .filter_map(|delta| {
+            let from = std::str::from_utf8(delta.old_file().path_bytes()?).ok()?;
+            let to = std::str::from_utf8(delta.new_file().path_bytes()?).ok()?;
+            Some(Rename {
+                from: from.to_string(),
+                to: to.to_string(),
+            })
+        })
+        .collect())
 }
 
 fn refspec(branch: &str) -> String {

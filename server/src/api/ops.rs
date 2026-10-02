@@ -1,6 +1,6 @@
-//! The path ops: `POST /_riki/api/delete` and `POST /_riki/api/restore`. The ops themselves are
-//! `riki_core::delete`; this file parses the request and maps the outcome to HTTP, with the same
-//! status mapping as save.
+//! The path ops: `POST /_riki/api/move`, `POST /_riki/api/delete`, and `POST /_riki/api/restore`.
+//! The ops themselves are `riki_core::move_page` and `riki_core::delete`; this file parses the
+//! request and maps the outcome to HTTP, with the same status mapping as save.
 
 use axum::Json;
 use axum::extract::State;
@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use riki_core::Oid;
 use riki_core::delete::{self, DeleteRequest, RestoreRequest};
 use riki_core::index::url_for_file;
+use riki_core::move_page::{self, MoveRequest};
 use riki_core::store::Signer;
 use riki_core::write::{OpAnswer, WriteOutcome};
 use serde::{Deserialize, Serialize};
@@ -19,8 +20,19 @@ use super::{error, fetch_failed, index_conflict, internal, no_tip, parse_oid, pu
 use crate::identity::Identity;
 use crate::routes::AppState;
 
+pub(super) const MOVE: &str = "/_riki/api/move";
 pub(super) const DELETE: &str = "/_riki/api/delete";
 pub(super) const RESTORE: &str = "/_riki/api/restore";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(super) struct MoveBody {
+    from: String,
+    base_oid: String,
+    to: String,
+    #[serde(default)]
+    message: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -53,6 +65,39 @@ fn author(identity: Identity) -> Signer {
         name: identity.name,
         email: identity.email,
     }
+}
+
+/// Move a page: one rename commit. 200 `{commit, url}` with the new URL; `commit: null` with
+/// `content-present: true` when the page is already at `to`.
+pub(super) async fn move_page(
+    State(state): State<AppState>,
+    identity: Identity,
+    body: Result<Json<MoveBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(rejection) => return error(StatusCode::BAD_REQUEST, rejection.body_text()),
+    };
+    let base_oid = match parse_oid("base-oid", &body.base_oid) {
+        Ok(oid) => oid,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let request = MoveRequest {
+        from: body.from,
+        base_oid,
+        to: body.to,
+        message: body.message,
+    };
+    let author = author(identity);
+    let outcome = match move_page::move_page(&state.wiki, &state.save, &author, &request).await {
+        Ok(outcome) => outcome,
+        Err(err) => return internal("moving", err),
+    };
+    info!(
+        "move: {} -> {} by {} -> {outcome:?}",
+        request.from, request.to, author.email
+    );
+    op_response("move", outcome, page_url(&request.to))
 }
 
 /// Delete a page: one commit removing it. 200 `{commit}`; `commit: null` with
@@ -108,8 +153,12 @@ pub(super) async fn restore(
         Err(err) => return internal("restoring", err),
     };
     info!("restore: {} by {} -> {outcome:?}", request.path, author.email);
-    let url = url_for_file(&request.path).map(|url| format!("/{url}"));
-    op_response("restore", outcome, url)
+    op_response("restore", outcome, page_url(&request.path))
+}
+
+/// The URL the page `file` is served at, with its leading `/`.
+fn page_url(file: &str) -> Option<String> {
+    url_for_file(file).map(|url| format!("/{url}"))
 }
 
 /// One `match` from a path op's outcome to HTTP. `url` rides on every 200.

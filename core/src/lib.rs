@@ -2,8 +2,10 @@
 
 pub mod delete;
 pub mod index;
+pub mod move_page;
 pub mod page;
 pub mod path;
+pub mod redirect;
 pub mod render;
 pub mod runtime;
 pub mod save;

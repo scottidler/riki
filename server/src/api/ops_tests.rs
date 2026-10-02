@@ -1,5 +1,5 @@
-//! Delete and restore end to end through the router: local `file://` upstreams in tempdirs, push
-//! stalls from a `remote.origin.receivepack` wrapper on the test's own bare clone.
+//! Move, delete, and restore end to end through the router: local `file://` upstreams in
+//! tempdirs, push stalls from a `remote.origin.receivepack` wrapper on the test's own bare clone.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -271,4 +271,170 @@ async fn a_restore_colliding_with_a_folder_readme_is_409_index_conflict() {
     let error = reply["error"].as_str().expect("error");
     assert!(error.starts_with("the restore would break the wiki"), "{error}");
     assert_eq!(head(&upstream.dir, BRANCH), Some(laptop), "nothing pushed");
+}
+
+async fn move_page(app: &Router, from: &str, base: &str, to: &str) -> (StatusCode, Value) {
+    post(
+        app,
+        "/_riki/api/move",
+        json!({"from": from, "base-oid": base, "to": to}),
+    )
+    .await
+}
+
+/// The status and `Location` of a GET of `url`.
+async fn location(app: &Router, url: &str) -> (StatusCode, Option<String>) {
+    let request = Request::get(url).body(Body::empty()).expect("request");
+    let response = app.clone().oneshot(request).await.expect("response");
+    let location = response
+        .headers()
+        .get("location")
+        .map(|value| value.to_str().expect("ascii").to_string());
+    (response.status(), location)
+}
+
+/// `git diff -M --name-status <branch>~1 <branch>` in the bare repo at `dir`.
+fn name_status(dir: &std::path::Path) -> String {
+    let output = std::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(dir)
+        .args(["diff", "-M", "--name-status"])
+        .arg(format!("{BRANCH}~1"))
+        .arg(BRANCH)
+        .output()
+        .expect("git diff");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).expect("utf-8")
+}
+
+#[tokio::test]
+async fn a_move_is_one_r100_commit_and_the_old_url_301s_to_the_new() {
+    let upstream = seeded();
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let base = base_oid(&app, "guide.md").await;
+
+    let (status, reply) = move_page(&app, "guide.md", &base, "docs/handbook.md").await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(reply["content-present"], false);
+    assert!(reply["commit"].is_string(), "{reply}");
+    assert_eq!(reply["url"], "/docs/handbook");
+    assert_eq!(history_len(&upstream.dir, BRANCH), 2, "exactly one commit");
+    assert_eq!(name_status(&upstream.dir), "R100\tguide.md\tdocs/handbook.md\n");
+    assert_eq!(head_author_email(&upstream.dir, BRANCH), "alice@example.com");
+
+    assert_eq!(
+        location(&app, "/guide").await,
+        (StatusCode::MOVED_PERMANENTLY, Some("/docs/handbook".to_string()))
+    );
+    let (status, page) = html(&app, "/docs/handbook").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("The original words."), "{page}");
+}
+
+#[tokio::test]
+async fn a_move_onto_a_page_or_into_a_readme_collision_is_409_and_nothing_pushed() {
+    let upstream = Upstream::new();
+    upstream.push(&[
+        ("README.md", "# home\n"),
+        ("guide.md", PAGE),
+        ("other.md", "# Other\n"),
+        ("team/README.md", "# Team\n"),
+    ]);
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let base = base_oid(&app, "guide.md").await;
+    for to in ["other.md", "team.md"] {
+        let (status, reply) = move_page(&app, "guide.md", &base, to).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{to}: {reply}");
+        assert_eq!(history_len(&upstream.dir, BRANCH), 1, "{to}: nothing pushed");
+    }
+}
+
+#[tokio::test]
+async fn a_move_and_its_move_back_redirect_to_the_first_live_hop() {
+    let upstream = Upstream::new();
+    upstream.push(&[("README.md", "# home\n"), ("a.md", PAGE)]);
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let base = base_oid(&app, "a.md").await;
+    let (status, reply) = move_page(&app, "a.md", &base, "b.md").await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let (status, reply) = move_page(&app, "b.md", &base, "a.md").await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(
+        location(&app, "/b").await,
+        (StatusCode::MOVED_PERMANENTLY, Some("/a".to_string()))
+    );
+    let (status, page) = html(&app, "/a").await;
+    assert_eq!(status, StatusCode::OK, "the page at /a wins over its own redirect");
+    assert!(page.contains("The original words."), "{page}");
+}
+
+#[tokio::test]
+async fn new_skips_the_redirect_and_offers_create_this_page() {
+    let upstream = Upstream::new();
+    upstream.push(&[("README.md", "# home\n"), ("foo.md", PAGE)]);
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let base = base_oid(&app, "foo.md").await;
+    let (status, reply) = move_page(&app, "foo.md", &base, "bar.md").await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(
+        location(&app, "/foo").await,
+        (StatusCode::MOVED_PERMANENTLY, Some("/bar".to_string()))
+    );
+    let (status, page) = html(&app, "/foo?new=Foo").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no 301");
+    assert!(page.contains("Create this page"), "{page}");
+    assert!(page.contains(r#"data-path="foo.md""#), "{page}");
+}
+
+#[tokio::test]
+async fn move_push_timeout_is_503_retry_safe_then_retry_is_200_content_present() {
+    let upstream = seeded();
+    let wiki = upstream.replica("r", Duration::from_secs(2)).await;
+    hang_after_receive(&upstream, "r");
+    let app = app(&wiki);
+    let base = base_oid(&app, "guide.md").await;
+
+    let (status, reply) = move_page(&app, "guide.md", &base, "handbook.md").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{reply}");
+    assert_eq!(reply["retry-safe"], true, "{reply}");
+    assert_eq!(history_len(&upstream.dir, BRANCH), 2, "the timed-out push landed");
+
+    let (status, reply) = move_page(&app, "guide.md", &base, "handbook.md").await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(
+        reply,
+        json!({"commit": null, "content-present": true, "url": "/handbook"})
+    );
+    assert_eq!(history_len(&upstream.dir, BRANCH), 2, "exactly one move commit");
+    assert_eq!(
+        location(&app, "/guide").await,
+        (StatusCode::MOVED_PERMANENTLY, Some("/handbook".to_string())),
+        "content-present published the tip with its redirects"
+    );
+}
+
+#[tokio::test]
+async fn bad_moves_are_400_and_commit_nothing() {
+    let upstream = seeded();
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let readme = base_oid(&app, "README.md").await;
+    let guide = base_oid(&app, "guide.md").await;
+    for (from, base, to) in [
+        ("README.md", readme.as_str(), "home.md"),
+        ("guide.md", &guide, "guide.md"),
+        ("guide.md", &guide, "guide.txt"),
+        ("guide.md", &guide, "_riki/guide.md"),
+        ("guide.md", "zz", "handbook.md"),
+    ] {
+        let (status, reply) = move_page(&app, from, base, to).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{from} -> {to}: {reply}");
+    }
+    let (status, _) = post(&app, "/_riki/api/move", json!({"from": "guide.md", "base-oid": guide})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "missing to");
+    assert_eq!(history_len(&upstream.dir, BRANCH), 1);
 }

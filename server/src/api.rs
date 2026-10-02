@@ -1,6 +1,6 @@
 //! The page API: `GET /_riki/api/page` (the editor's view of a page), `POST /_riki/api/page`
 //! (save), `POST /_riki/api/roundtrip` (the round-trip guard's comparison), and the path ops
-//! `POST /_riki/api/delete` and `POST /_riki/api/restore` (`ops`).
+//! `POST /_riki/api/move`, `POST /_riki/api/delete`, and `POST /_riki/api/restore` (`ops`).
 //!
 //! Every POST route sits behind the JSON-only guard: a cross-origin JSON POST needs a CORS
 //! preflight riki never answers, so requiring `application/json` blocks form-based CSRF. The save
@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
     let posts = Router::new()
         .route(PAGE, post(save))
         .route(ROUNDTRIP, post(roundtrip))
+        .route(ops::MOVE, post(ops::move_page))
         .route(ops::DELETE, post(ops::delete))
         .route(ops::RESTORE, post(ops::restore))
         .route_layer(middleware::from_fn(require_json));

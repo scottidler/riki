@@ -25,9 +25,10 @@ async fn post(path: &str, content_type: Option<&str>, email: Option<&str>) -> St
         .status()
 }
 
-const POST_ROUTES: [&str; 4] = [
+const POST_ROUTES: [&str; 5] = [
     "/_riki/api/page",
     "/_riki/api/roundtrip",
+    "/_riki/api/move",
     "/_riki/api/delete",
     "/_riki/api/restore",
 ];
@@ -57,8 +58,8 @@ async fn form_encoded_post_is_415_on_every_post_route() {
 }
 
 #[tokio::test]
-async fn delete_and_restore_without_the_email_header_are_401() {
-    for path in ["/_riki/api/delete", "/_riki/api/restore"] {
+async fn path_ops_without_the_email_header_are_401() {
+    for path in ["/_riki/api/move", "/_riki/api/delete", "/_riki/api/restore"] {
         let code = post(path, Some("application/json"), None).await;
         assert_eq!(code, StatusCode::UNAUTHORIZED, "{path}");
     }

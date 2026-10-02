@@ -59,7 +59,7 @@ async fn commit_pushed_upstream_is_readable_after_one_poll() {
     assert_eq!(wiki.poll().await.expect("poll"), PollOutcome::Published(second));
     let good = wiki.good().expect("good");
     assert_eq!(good.commit(), second);
-    let file = good.file_for_url("a/b").expect("indexed");
+    let file = good.nav.file_for_url("a/b").expect("indexed");
     let body = wiki.store().read_blob(good.commit(), file).await.expect("read");
     assert_eq!(body.as_deref(), Some(b"# laptop push\n".as_slice()));
     assert_eq!(good_ref(fx.cache()), Some(second));

@@ -1,9 +1,10 @@
-//! The served content: the good tip's nav index, the upstream health, and **publish**, the only
-//! way the good tip moves.
+//! The served content: the good tip's [`Published`] snapshot, the upstream health, and
+//! **publish**, the only way the good tip moves.
 //!
-//! Publish builds the nav index for a commit. On success it writes the commit to `refs/riki/good`
-//! and swaps the in-memory index; on failure it leaves both alone and records the error. Startup
-//! reads `refs/riki/good` (the tip on first run), so a restart never serves an invalid tip.
+//! Publish builds the nav index for a commit. On success it builds the rest of the snapshot
+//! (redirects), writes the commit to `refs/riki/good`, and swaps the in-memory snapshot as a unit;
+//! on failure it leaves both alone and records the error. Startup reads `refs/riki/good` (the tip
+//! on first run) and publishes it, so a restart never serves an invalid tip.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -13,6 +14,7 @@ use git2::Oid;
 use tracing::{debug, info, warn};
 
 use crate::index::{ErrorList, NavIndex};
+use crate::redirect::Redirects;
 use crate::store::{GitStore, RepoGuard, StoreConfig, StoreError};
 
 /// Upstream has been unreachable since `since`; `error` is the latest fetch failure.
@@ -42,6 +44,21 @@ struct Health {
     rejected: Option<Rejected>,
 }
 
+/// Everything served for the good tip, swapped as one unit by [`Wiki::publish`], so a request
+/// never mixes the nav of one commit with the redirects of another.
+#[derive(Debug)]
+pub struct Published {
+    pub nav: Arc<NavIndex>,
+    pub redirects: Redirects,
+}
+
+impl Published {
+    /// The good tip this snapshot was built from.
+    pub fn commit(&self) -> Oid {
+        self.nav.commit()
+    }
+}
+
 /// What publish did with a commit.
 #[derive(Debug, Clone)]
 pub enum PublishOutcome {
@@ -65,7 +82,7 @@ pub enum PollOutcome {
 pub struct Wiki {
     store: GitStore,
     indexes: Mutex<HashMap<Oid, Arc<NavIndex>>>,
-    good: RwLock<Option<Arc<NavIndex>>>,
+    good: RwLock<Option<Arc<Published>>>,
     health: Mutex<Health>,
 }
 
@@ -95,8 +112,8 @@ impl Wiki {
         &self.store
     }
 
-    /// The good tip's index, or `None` when nothing has published yet.
-    pub fn good(&self) -> Option<Arc<NavIndex>> {
+    /// The good tip's snapshot, or `None` when nothing has published yet.
+    pub fn good(&self) -> Option<Arc<Published>> {
         self.good.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
@@ -151,8 +168,10 @@ impl Wiki {
         Ok(index)
     }
 
-    /// Publish `commit`: the only way the good tip moves. Requires the repo mutex because it
-    /// writes `refs/riki/good`.
+    /// Publish `commit`: the only way the good tip moves, and the only writer of the served
+    /// snapshot. Requires the repo mutex because it writes `refs/riki/good`. Redirects extend the
+    /// current snapshot's map incrementally; the first publish (the one `open` awaits) has none,
+    /// so it walks the full history before anything is served.
     pub async fn publish(&self, guard: &RepoGuard<'_>, commit: Oid) -> Result<PublishOutcome, StoreError> {
         let index = self.index(commit).await?;
         if !index.is_publishable() {
@@ -161,8 +180,14 @@ impl Wiki {
             self.health().rejected = Some(Rejected { commit, errors });
             return Ok(PublishOutcome::Refused(index));
         }
+        let previous = self.good();
+        let redirects = Redirects::build(&self.store, previous.as_ref().map(|good| &good.redirects), commit).await?;
         self.store.set_good(guard, commit).await?;
-        *self.good.write().unwrap_or_else(PoisonError::into_inner) = Some(index.clone());
+        let published = Arc::new(Published {
+            nav: index.clone(),
+            redirects,
+        });
+        *self.good.write().unwrap_or_else(PoisonError::into_inner) = Some(published);
         self.health().rejected = None;
         info!("publish: good tip is now {commit}");
         Ok(PublishOutcome::Published(index))

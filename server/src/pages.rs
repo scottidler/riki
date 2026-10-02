@@ -1,10 +1,12 @@
-//! The content routes: the page catch-all, the `.md` redirect, and the image route.
+//! The content routes: the page catch-all, the `.md` redirect, the moved-page redirects, and the
+//! image route.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use riki_core::index::{PageNode, RESERVED, prettify, url_for_file};
 use riki_core::render::{encode_path, render_markdown};
+use serde::Deserialize;
 use tracing::{debug, error, warn};
 
 use crate::render::{self, Action, CSP_ASSET, CSP_PAGE, PageView};
@@ -20,12 +22,19 @@ const IMAGE_TYPES: &[(&str, &str)] = &[
     ("svg", "image/svg+xml"),
 ];
 
-pub async fn root(State(state): State<AppState>) -> Response {
-    page_at(&state, "").await
+/// A page request's query. `new` (the new-page title) marks an explicit create: a missing page
+/// renders "Create this page" instead of following a redirect away from the URL being created.
+#[derive(Debug, Default, Deserialize)]
+pub struct PageQuery {
+    new: Option<String>,
 }
 
-pub async fn page(State(state): State<AppState>, Path(path): Path<String>) -> Response {
-    page_at(&state, &path).await
+pub async fn root(State(state): State<AppState>, Query(query): Query<PageQuery>) -> Response {
+    page_at(&state, "", &query).await
+}
+
+pub async fn page(State(state): State<AppState>, Path(path): Path<String>, Query(query): Query<PageQuery>) -> Response {
+    page_at(&state, &path, &query).await
 }
 
 pub async fn raw(State(state): State<AppState>, Path(path): Path<String>) -> Response {
@@ -70,15 +79,25 @@ pub fn image_content_type(path: &str) -> Option<&'static str> {
         .map(|(_, content_type)| *content_type)
 }
 
-async fn page_at(state: &AppState, raw_path: &str) -> Response {
+async fn page_at(state: &AppState, raw_path: &str, query: &PageQuery) -> Response {
     let path = raw_path.trim_matches('/');
-    debug!("page_at: path={path:?}");
+    debug!("page_at: path={path:?} new={:?}", query.new);
     if path.ends_with(".md") {
         return redirect_to_page(path);
     }
-    let Some(index) = state.wiki.good() else {
+    let Some(published) = state.wiki.good() else {
         return error_response(StatusCode::SERVICE_UNAVAILABLE, "No content has been published yet.");
     };
+    let index = &published.nav;
+    if index.file_for_url(path).is_none()
+        && query.new.is_none()
+        && let Some(target) = published
+            .redirects
+            .resolve(path, |url| index.file_for_url(url).is_some())
+    {
+        debug!("page_at: /{path} moved to /{target}");
+        return moved_to(target);
+    }
     let banners = render::banners(state.wiki.rejected().as_ref(), state.wiki.unreachable().as_ref());
     let tree = index.tree();
     let sidebar = render::sidebar(tree, path);
@@ -144,8 +163,12 @@ struct Chrome<'a> {
 
 /// `/a/b.md` -> 301 `/a/b`; `/a/README.md` -> `/a`.
 fn redirect_to_page(file: &str) -> Response {
-    let url = url_for_file(file).unwrap_or_default();
-    let location = format!("/{}", encode_path(&url));
+    moved_to(&url_for_file(file).unwrap_or_default())
+}
+
+/// 301 to the page at `url` (no leading `/`).
+fn moved_to(url: &str) -> Response {
+    let location = format!("/{}", encode_path(url));
     (StatusCode::MOVED_PERMANENTLY, [(header::LOCATION, location)]).into_response()
 }
 
