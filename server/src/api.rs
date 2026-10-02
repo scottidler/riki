@@ -14,8 +14,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use riki_core::Oid;
+use riki_core::index::url_for_file;
 use riki_core::page::{self, StaticRule};
 use riki_core::save::{self, SaveOutcome, SaveRequest};
+use riki_core::slug;
 use riki_core::store::Signer;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
@@ -25,6 +27,8 @@ use crate::routes::AppState;
 
 const PAGE: &str = "/_riki/api/page";
 const ROUNDTRIP: &str = "/_riki/api/roundtrip";
+const TREE: &str = "/_riki/api/tree";
+const NEW_PAGE: &str = "/_riki/api/new-page";
 
 pub fn router() -> Router<AppState> {
     let posts = Router::new()
@@ -34,7 +38,11 @@ pub fn router() -> Router<AppState> {
         .route(ops::DELETE, post(ops::delete))
         .route(ops::RESTORE, post(ops::restore))
         .route_layer(middleware::from_fn(require_json));
-    Router::new().route(PAGE, get(load)).merge(posts)
+    Router::new()
+        .route(PAGE, get(load))
+        .route(TREE, get(tree))
+        .route(NEW_PAGE, get(new_page))
+        .merge(posts)
 }
 
 /// 415 unless `Content-Type` is `application/json`; parameters (`; charset=utf-8`) are accepted.
@@ -146,6 +154,87 @@ async fn load(State(state): State<AppState>, query: Result<Query<LoadQuery>, Que
         },
     };
     Json(body).into_response()
+}
+
+#[derive(Debug, Serialize)]
+struct TreePage {
+    path: String,
+    url: String,
+    title: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TreeBody {
+    folders: Vec<String>,
+    pages: Vec<TreePage>,
+}
+
+/// Every page at the good tip and every directory that holds one, for the move dialog's folder
+/// picker and the editor's link box. The root (`""`) is always a folder: it is always a valid
+/// destination.
+async fn tree(State(state): State<AppState>) -> Response {
+    let Some(published) = state.wiki.good() else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "no published version yet");
+    };
+    let nav = &published.nav;
+    let mut folders = std::collections::BTreeSet::from([String::new()]);
+    let mut pages = Vec::new();
+    for (url, file) in nav.pages() {
+        let folder = file.rsplit_once('/').map_or("", |(dir, _)| dir);
+        folders.insert(folder.to_string());
+        let segment = url.rsplit('/').next().unwrap_or_default();
+        let title = nav
+            .node(url)
+            .map_or_else(|| segment.to_string(), |node| crate::render::label(node, segment));
+        pages.push(TreePage {
+            path: file.to_string(),
+            url: format!("/{url}"),
+            title,
+        });
+    }
+    debug!("tree: folders={} pages={}", folders.len(), pages.len());
+    Json(TreeBody {
+        folders: folders.into_iter().collect(),
+        pages,
+    })
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct NewPageQuery {
+    #[serde(default)]
+    folder: String,
+    title: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NewPageBody {
+    path: String,
+    url: String,
+}
+
+/// The path a new page titled `title` would get in `folder`, from the slug rule at the good tip.
+/// Writes nothing.
+async fn new_page(State(state): State<AppState>, query: Result<Query<NewPageQuery>, QueryRejection>) -> Response {
+    let Ok(Query(NewPageQuery { folder, title })) = query else {
+        return error(StatusCode::BAD_REQUEST, "missing `title` query parameter");
+    };
+    let Some(published) = state.wiki.good() else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "no published version yet");
+    };
+    let path = match slug::new_page_path(&published.nav, &folder, &title) {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::BAD_REQUEST, err.to_string()),
+    };
+    let Some(url) = url_for_file(&path) else {
+        return internal("deriving the url", &path);
+    };
+    debug!("new_page: folder={folder:?} title={title:?} path={path}");
+    Json(NewPageBody {
+        path,
+        url: format!("/{url}"),
+    })
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -337,3 +426,6 @@ mod ops_tests;
 mod save_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tree_tests;

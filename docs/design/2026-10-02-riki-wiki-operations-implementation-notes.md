@@ -91,3 +91,18 @@
 - Warning in `Wiki::index` (cached, once per commit) vs. in `publish`: `index` also runs for step-7 candidate commits that never publish, so a bad `_order` on a candidate also warns; that is useful signal and does not repeat.
 ### Open questions
 - None.
+
+## Phase 6: Tree and new-page routes, slug
+### Design decisions
+- `core/src/slug.rs` has `slugify(title)` (the rule, pure) and `new_page_path(&NavIndex, folder, title)`. "Taken" is `NavIndex::file_for_url(<folder>/<slug>).is_some()`: `<folder>/<slug>.md` and `<folder>/<slug>/README.md` map to one URL (`index.rs:url_for_file`), so one lookup covers both files from the good tip's nav index, with no extra git read. Top-level reserved names are checked against `index::RESERVED`.
+- Folder validation is `path::validate` (400 on `..`, leading `.`, empty segment, NUL) plus a reserved-first-segment check (`status/x.md` would be an index error, so `folder=status` is a 400, `SlugError::ReservedFolder`). The folder need not exist: the move dialog creates folders by naming one.
+- `GET /_riki/api/tree` reads the published `nav`: `folders` is every directory that directly holds a page file, plus `""` always (the root is always a valid destination, and the doc's example shows it); `pages` is `{path, url, title}` with `url` leading-slash (`/guide`, `/` for home) and title from `render::label`, the same label the sidebar shows (front matter or H1, else prettified segment, `Home` at root). 503 when nothing is published yet.
+- `GET /_riki/api/new-page` returns `{path, url}` with a leading-slash url; missing `title` is a 400 (a missing `folder` means the root).
+- Tests: core `slug::tests` (7: rule, untitled, free, `.md` taken, `README.md` taken, climbing suffixes, reserved at root only, new/invalid/reserved folder) and server `api::tree_tests` (4, via the router, including the three Phase 6 criteria cases: `guide/getting-started.md`, `-2` via either file, `status-2.md`).
+### Deviations
+- None.
+### Tradeoffs
+- Nav-index lookup vs. `entry_at` tree reads for the collision check: the doc says the check runs at the good tip and the slug is advisory; the nav index is that tip, already in memory. A bare directory with no page in it (e.g. `img/`) does not take a slug, which is right: no URL collides. A non-page file with the same stem (`x.png`) is not a collision either.
+- Leading-slash `url` in both routes vs. riki's internal slash-less URLs: the client navigates with it directly, as the move/restore responses already do.
+### Open questions
+- None.
