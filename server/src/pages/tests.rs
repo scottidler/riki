@@ -7,6 +7,7 @@ use riki_core::runtime::Runtime;
 use riki_core::wiki::Wiki;
 use tower::ServiceExt;
 
+use crate::render::Site;
 use crate::routes::{AppState, router};
 use crate::testkit::Upstream;
 
@@ -105,7 +106,7 @@ async fn pages_show_the_sidebar_and_an_edit_button() {
     let fx = wiki_with(&[("README.md", "# home\n"), ("a/b.md", "b\n")]).await;
     let html = get(&fx.wiki, "/a/b").await.text();
     assert!(
-        html.contains(r#"<a href="/a/b" class="current" aria-current="page">b</a>"#),
+        html.contains(r#"<a href="/a/b" class="current" aria-current="page">B</a>"#),
         "{html}"
     );
     assert!(html.contains("id=\"riki-edit\""), "{html}");
@@ -279,28 +280,38 @@ async fn page_html_is_safe_mode() {
 }
 
 #[tokio::test]
-async fn titles_come_from_each_pages_first_heading() {
+async fn titles_come_from_each_page_and_the_site_name_from_the_config() {
     let fx = wiki_with(&[
         ("README.md", "# Platform Handbook\n\nWelcome.\n"),
         (
             "guide/setup.md",
             "---\nx: 1\n---\n# Setup guide\n\n## Install\n\n### Linux\n",
         ),
-        ("guide/services.md", "# Service catalog\n"),
+        (
+            "guide/services.md",
+            "---\ntitle: Service catalog\n---\n# Services we run\n",
+        ),
     ])
     .await;
-    let html = get(&fx.wiki, "/guide/setup").await.text();
+    let site = Site {
+        name: "Team Wiki".to_string(),
+        logo: None,
+    };
+    let html = send(
+        AppState::new(Arc::new(Runtime::new()), fx.wiki.clone()).with_site(site),
+        "/guide/setup",
+    )
+    .await
+    .text();
+    assert!(html.contains("<title>Setup guide - Team Wiki</title>"), "{html}");
     assert!(
-        html.contains("<title>Setup guide - Platform Handbook</title>"),
-        "{html}"
+        html.contains(r#"<span class="riki-brand-name">Team Wiki</span></a>"#),
+        "the configured site name, not the home page's H1: {html}"
     );
-    assert!(
-        html.contains("<span>Platform Handbook</span></a>"),
-        "the site title: {html}"
-    );
+    assert!(!html.contains("Platform Handbook</span>"), "{html}");
     assert!(
         html.contains(r#">Service catalog</a>"#),
-        "sidebar labels are titles: {html}"
+        "sidebar labels are titles, front matter first: {html}"
     );
     assert!(
         html.contains(r#"<li aria-current="page">Setup guide</li>"#),
@@ -318,10 +329,10 @@ async fn titles_come_from_each_pages_first_heading() {
 }
 
 #[tokio::test]
-async fn a_page_without_a_heading_is_titled_by_its_segment_and_the_site_falls_back_to_riki() {
-    let fx = wiki_with(&[("README.md", "no heading\n"), ("notes.md", "plain\n")]).await;
-    let html = get(&fx.wiki, "/notes").await.text();
-    assert!(html.contains("<title>notes - riki</title>"), "{html}");
+async fn a_page_without_a_heading_is_titled_by_its_prettified_segment_and_the_site_falls_back_to_riki() {
+    let fx = wiki_with(&[("README.md", "no heading\n"), ("release-notes.md", "plain\n")]).await;
+    let html = get(&fx.wiki, "/release-notes").await.text();
+    assert!(html.contains("<title>Release notes - riki</title>"), "{html}");
 }
 
 #[tokio::test]
@@ -341,8 +352,64 @@ async fn a_missing_page_keeps_the_sidebar_and_breadcrumbs() {
     let html = get(&fx.wiki, "/guide/nope").await.text();
     assert!(html.contains(r#"href="/guide/setup""#), "{html}");
     assert!(
-        html.contains(r#"<li>guide</li><li aria-current="page">nope</li>"#),
+        html.contains(r#"<li>Guide</li><li aria-current="page">Nope</li>"#),
         "{html}"
     );
-    assert!(html.contains("<title>Not found - Home page</title>"), "{html}");
+    assert!(html.contains("<title>Not found - riki</title>"), "{html}");
+    assert!(!html.contains("riki-pager"), "a 404 has no previous / next: {html}");
+}
+
+#[tokio::test]
+async fn a_page_shows_previous_next_and_the_section_trail() {
+    let fx = wiki_with(&[
+        ("README.md", "# Home page\n"),
+        ("guide/README.md", "# Guides\n"),
+        ("guide/setup.md", "# Setup\n"),
+        ("reference/config.md", "# Configuration\n"),
+    ])
+    .await;
+    let html = get(&fx.wiki, "/guide/setup").await.text();
+    assert!(
+        html.contains(r#"class="riki-pager-card riki-pager-prev" href="/guide"><span class="riki-pager-label">Previous</span><span class="riki-pager-title">Guides</span>"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"href="/reference/config"><span class="riki-pager-label">Next</span><span class="riki-pager-title">Configuration</span>"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"<ol class="riki-trail-path"><li>Guides</li><li aria-current="page">Setup</li></ol>"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"<p class="riki-nav-heading">Reference</p>"#),
+        "a README-less folder is labelled by its prettified name: {html}"
+    );
+}
+
+#[tokio::test]
+async fn a_configured_logo_is_served_from_the_content_repo() {
+    let fx = wiki_with(&[
+        ("README.md", "# Home\n"),
+        ("brand/light.svg", "<svg/>"),
+        ("brand/dark.svg", "<svg/>"),
+    ])
+    .await;
+    let site = Site {
+        name: "Wiki".to_string(),
+        logo: Some(crate::render::Logo {
+            light: "brand/light.svg".to_string(),
+            dark: "brand/dark.svg".to_string(),
+        }),
+    };
+    let html = send(
+        AppState::new(Arc::new(Runtime::new()), fx.wiki.clone()).with_site(site),
+        "/",
+    )
+    .await
+    .text();
+    assert!(html.contains(r#"src="/_riki/raw/brand/light.svg""#), "{html}");
+    let logo = get(&fx.wiki, "/_riki/raw/brand/dark.svg").await;
+    assert_eq!(logo.status, StatusCode::OK);
+    assert_eq!(logo.header(header::CONTENT_TYPE), "image/svg+xml");
 }

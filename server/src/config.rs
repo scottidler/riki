@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eyre::{Context, Result, eyre};
+use riki_core::index::prettify;
 use riki_core::store::StoreConfig;
 use serde::Deserialize;
 use tracing::debug;
+
+use crate::pages::image_content_type;
+use crate::render::{Logo, Site};
 
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8737";
 
@@ -24,6 +28,26 @@ pub struct Config {
     pub committer: CommitterConfig,
     #[serde(default)]
     pub identity: IdentityConfig,
+    #[serde(default)]
+    pub site: SiteConfig,
+}
+
+/// The wiki's identity. Every key is optional: the name defaults to the content repo's name,
+/// prettified (`platform-handbook.git` -> `Platform handbook`), and with no logo the header shows
+/// the name as text.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SiteConfig {
+    pub name: Option<String>,
+    pub logo: Option<LogoConfig>,
+}
+
+/// One image per theme, as repo-relative paths in the content repo (served via `/_riki/raw/`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct LogoConfig {
+    pub light: String,
+    pub dark: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +174,20 @@ impl Config {
         github_blob_base(&self.content.remote, &self.content.branch)
     }
 
+    /// The site name and logo the pages show: `site.name`, else the content repo's name
+    /// prettified, else `riki`.
+    pub fn site(&self) -> Site {
+        let name = match &self.site.name {
+            Some(name) => name.trim().to_string(),
+            None => repo_name(&self.content.remote).map_or_else(|| Site::default().name, prettify),
+        };
+        let logo = self.site.logo.as_ref().map(|logo| Logo {
+            light: logo.light.clone(),
+            dark: logo.dark.clone(),
+        });
+        Site { name, logo }
+    }
+
     /// Load the config at `path`, or at the XDG default when `path` is `None`. A missing or
     /// invalid file is an error: riki never starts on guessed settings.
     pub fn load(path: Option<&Path>) -> Result<Self> {
@@ -174,6 +212,19 @@ impl Config {
     /// Cross-field rules a single key cannot express. Header identity trusts whatever the
     /// identity headers say, so only a loopback listener (the local edge) may receive requests.
     pub fn validate(&self) -> Result<()> {
+        if self.site.name.as_deref().is_some_and(|name| name.trim().is_empty()) {
+            return Err(eyre!("site.name is empty: leave it out to use the content repo's name"));
+        }
+        if let Some(logo) = &self.site.logo {
+            for (key, file) in [("site.logo.light", &logo.light), ("site.logo.dark", &logo.dark)] {
+                riki_core::path::validate(file).map_err(|err| eyre!("{key} `{file}` is not a repo path: {err}"))?;
+                if image_content_type(file).is_none() {
+                    return Err(eyre!(
+                        "{key} `{file}` is not an image riki serves (png, jpg, jpeg, gif, webp, svg)"
+                    ));
+                }
+            }
+        }
         match self.identity.mode {
             IdentityMode::Header if !self.listen.ip().is_loopback() => Err(eyre!(
                 "identity.mode `header` requires a loopback `listen` address (127.0.0.0/8 or ::1), got {}: \
@@ -207,6 +258,14 @@ pub fn github_blob_base(remote: &str, branch: &str) -> Option<String> {
     }
     let branch = riki_core::render::encode_path(branch);
     Some(format!("https://github.com/{owner}/{repo}/blob/{branch}/"))
+}
+
+/// The repository name at the end of a git remote (`git@host:o/handbook.git` -> `handbook`,
+/// `file:///srv/wiki.git/` -> `wiki`); `None` when there is none.
+pub fn repo_name(remote: &str) -> Option<&str> {
+    let last = remote.trim_end_matches('/').rsplit(['/', ':']).next()?;
+    let name = last.strip_suffix(".git").unwrap_or(last);
+    (!name.is_empty()).then_some(name)
 }
 
 /// `$XDG_CONFIG_HOME/riki/riki.yml`, else `~/.config/riki/riki.yml`.

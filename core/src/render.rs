@@ -112,6 +112,28 @@ create_formatter!(RikiFormatter<Vec<TocEntry>>, {
         context.write_str("</p>")?;
         context.lf()?;
     },
+    // Every code block sits in a `.riki-code` frame (the page script adds the copy button). A
+    // fence that names a title (`title="x"`, or free text after the language) gets a header bar
+    // carrying it; the language itself is never shown.
+    NodeValue::CodeBlock(ref block) => |context, node, entering| {
+        if !entering {
+            return format_node_default(context, node, entering);
+        }
+        let title = code_title(&block.info);
+        context.cr()?;
+        match title {
+            Some(ref title) => {
+                context.write_str("<div class=\"riki-code riki-code-titled\"><div class=\"riki-code-head\"><span class=\"riki-code-title\">")?;
+                context.escape(title)?;
+                context.write_str("</span></div>")?;
+            }
+            None => context.write_str("<div class=\"riki-code\">")?,
+        }
+        format_node_default(context, node, entering)?;
+        context.cr()?;
+        context.write_str("</div>")?;
+        context.lf()?;
+    },
     // Tables sit in a scroll container, the same one the editor's table view has.
     NodeValue::Table(_) => |context, node, entering| {
         if entering {
@@ -160,17 +182,60 @@ pub fn render_markdown(source_file: &str, markdown: &str) -> Rendered {
     Rendered { html, toc }
 }
 
-/// The page's title: the text of its first level-1 heading, front matter skipped. `None` when the
-/// page has no `# heading` (or only an empty one).
+/// The title a code fence names in its info string: `title="x"` (or `title='x'`) anywhere after
+/// the language, else the free text after the language (```` ```rust src/main.rs ````). `None`
+/// for a bare language, or meta that is only `key=value` / `{...}` attributes.
+pub fn code_title(info: &str) -> Option<String> {
+    let meta = info
+        .trim()
+        .split_once(char::is_whitespace)
+        .map(|(_, meta)| meta.trim())?;
+    if let Some(start) = meta.find("title=") {
+        let value = &meta[start + "title=".len()..];
+        let title = match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => value[1..].split(quote).next().unwrap_or_default(),
+            _ => value.split_whitespace().next().unwrap_or_default(),
+        };
+        return (!title.is_empty()).then(|| title.to_string());
+    }
+    let attribute = |word: &str| word.contains('=') || word.starts_with('{');
+    if meta.is_empty() || meta.split_whitespace().any(attribute) {
+        return None;
+    }
+    Some(meta.to_string())
+}
+
+/// The page's title: the front matter's top-level `title:`, else the text of its first level-1
+/// heading. `None` when the page has neither (or only empty ones).
 pub fn page_title(markdown: &str) -> Option<String> {
     let options = options("");
     let arena = Arena::new();
     let root = parse_document(&arena, markdown, &options);
+    let front_matter = root.children().find_map(|node| match node.data().value {
+        NodeValue::FrontMatter(ref raw) => front_matter_title(raw),
+        _ => None,
+    });
+    if front_matter.is_some() {
+        return front_matter;
+    }
     let heading = root
         .descendants()
         .find(|node| matches!(node.data().value, NodeValue::Heading(ref h) if h.level == 1))?;
     let text = heading_text(heading);
     (!text.is_empty()).then_some(text)
+}
+
+/// The scalar `title:` key at the top level of a YAML front matter block (`---` lines included).
+/// Riki only needs this one key, so it reads the line rather than parsing YAML: an unquoted value
+/// is trimmed, a quoted one has its quotes stripped. Nested (indented) `title:` keys are ignored.
+fn front_matter_title(raw: &str) -> Option<String> {
+    let value = raw.lines().find_map(|line| line.strip_prefix("title:"))?.trim();
+    let unquoted = ['"', '\'']
+        .iter()
+        .find_map(|quote| value.strip_prefix(*quote).and_then(|rest| rest.strip_suffix(*quote)))
+        .unwrap_or(value)
+        .trim();
+    (!unquoted.is_empty()).then(|| unquoted.to_string())
 }
 
 fn heading_text<'a>(node: &'a AstNode<'a>) -> String {

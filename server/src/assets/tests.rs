@@ -34,6 +34,37 @@ fn the_committed_bundle_is_embedded() {
 }
 
 #[tokio::test]
+async fn serves_the_bundled_fonts_as_woff2() {
+    for name in [
+        "inter-latin-wght-normal.woff2",
+        "inter-latin-wght-italic.woff2",
+        "inter-latin-ext-wght-normal.woff2",
+        "jetbrains-mono-latin-wght-normal.woff2",
+        "jetbrains-mono-latin-ext-wght-normal.woff2",
+    ] {
+        let reply = send(&format!("/_riki/assets/{name}"), None).await;
+        assert_eq!(reply.status(), StatusCode::OK, "{name}");
+        assert_eq!(reply.headers()[header::CONTENT_TYPE], "font/woff2", "{name}");
+        let body = reply.into_body().collect().await.expect("body").to_bytes();
+        assert_eq!(&body[..4], b"wOF2", "{name} is a woff2 file");
+    }
+}
+
+#[test]
+fn every_font_the_theme_names_is_embedded() {
+    let css = std::str::from_utf8(find("riki.css").expect("riki.css").bytes).expect("utf-8");
+    let fonts: Vec<&str> = css
+        .split("/_riki/assets/")
+        .skip(1)
+        .map(|rest| rest.split(')').next().unwrap_or_default())
+        .collect();
+    assert!(fonts.len() >= 5, "{fonts:?}");
+    for font in fonts {
+        assert!(find(font).is_some(), "riki.css loads {font}, which is not embedded");
+    }
+}
+
+#[tokio::test]
 async fn serves_the_page_theme_and_script_with_their_types() {
     let css = send("/_riki/assets/riki.css", None).await;
     assert_eq!(css.status(), StatusCode::OK);
@@ -56,8 +87,14 @@ fn the_theme_styles_the_markup_the_renderer_emits() {
         ".riki-toc",
         ".riki-sidebar",
         ".riki-breadcrumbs",
+        ".riki-pager",
+        ".riki-trail",
+        ".riki-nav-heading",
+        ".riki-code-fade",
+        ".riki-code-head",
         "prefers-color-scheme",
-        "[data-theme=",
+        ":root.dark",
+        "@font-face",
     ] {
         assert!(css.contains(class), "riki.css has no {class}");
     }

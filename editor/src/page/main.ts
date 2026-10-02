@@ -1,25 +1,30 @@
-// Page script entry, /_riki/assets/riki.js. Loaded without `defer` in <head> so a pinned theme
+// Page script entry, /_riki/assets/riki.js. Loaded without `defer` in <head> so the stored theme
 // applies before first paint; everything that needs the DOM waits for DOMContentLoaded. Clicks
 // are delegated from the document, so the editor's re-render (which swaps the sidebar and main)
 // needs only the `riki:rendered` event to re-decorate.
 
 import {
-  applyTheme,
   activeTocId,
+  applyPreference,
+  choosePreference,
   copyFrom,
+  currentPreference,
   decorateCodeBlocks,
   localStore,
+  markOverflow,
   markToc,
   setNavOpen,
-  storedTheme,
-  toggleTheme,
+  storedPreference,
+  switchChoice,
+  toggleGroup,
   tocHeadings,
 } from './ui'
 
 const root = document.documentElement
-applyTheme(root, storedTheme(localStore()))
-
-const prefersDark = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+const darkQuery = window.matchMedia?.('(prefers-color-scheme: dark)')
+const prefersDark = () => darkQuery?.matches ?? false
+applyPreference(root, storedPreference(localStore()), prefersDark())
+darkQuery?.addEventListener('change', () => applyPreference(root, currentPreference(root), prefersDark()))
 
 function headerOffset(): number {
   const header = document.querySelector('.riki-header')
@@ -36,20 +41,36 @@ function spy(): void {
   })
 }
 
+const resized = typeof ResizeObserver === 'function'
+  ? new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const wrap = entry.target.closest<HTMLElement>('.riki-code')
+        if (wrap) markOverflow(wrap)
+      }
+    })
+  : null
+
 function decorate(): void {
+  applyPreference(root, currentPreference(root), prefersDark())
   decorateCodeBlocks(document)
+  for (const pre of document.querySelectorAll('article.riki-prose .riki-code > pre')) resized?.observe(pre)
   spy()
 }
 
 document.addEventListener('click', (event) => {
   const target = event.target instanceof Element ? event.target : null
-  const toggle = target?.closest<HTMLElement>('[data-riki-toggle]')
-  if (toggle?.dataset['rikiToggle'] === 'theme') {
-    toggleTheme(root, localStore(), prefersDark())
+  const choice = switchChoice(target)
+  if (choice) {
+    choosePreference(root, localStore(), choice, prefersDark())
     return
   }
+  const toggle = target?.closest<HTMLElement>('[data-riki-toggle]')
   if (toggle?.dataset['rikiToggle'] === 'nav') {
     setNavOpen(document, !document.body.classList.contains('riki-nav-open'))
+    return
+  }
+  if (toggle?.dataset['rikiToggle'] === 'group') {
+    toggleGroup(toggle)
     return
   }
   const copy = target?.closest<HTMLElement>('.riki-copy')
@@ -65,6 +86,11 @@ document.addEventListener('keydown', (event) => {
 })
 
 window.addEventListener('scroll', spy, { passive: true })
+if (!resized) {
+  window.addEventListener('resize', () => {
+    for (const wrap of document.querySelectorAll<HTMLElement>('article.riki-prose .riki-code')) markOverflow(wrap)
+  })
+}
 document.addEventListener('riki:rendered', decorate)
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', decorate)
 else decorate()

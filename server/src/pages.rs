@@ -3,7 +3,7 @@
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use riki_core::index::{PageNode, RESERVED, url_for_file};
+use riki_core::index::{PageNode, RESERVED, prettify, url_for_file};
 use riki_core::render::{encode_path, render_markdown};
 use tracing::{debug, error, warn};
 
@@ -60,7 +60,9 @@ pub async fn raw(State(state): State<AppState>, Path(path): Path<String>) -> Res
         .into_response()
 }
 
-fn image_content_type(path: &str) -> Option<&'static str> {
+/// The content type `/_riki/raw/` serves `path` with, by extension; `None` when it serves no such
+/// file type.
+pub fn image_content_type(path: &str) -> Option<&'static str> {
     let (_, extension) = path.rsplit_once('.')?;
     IMAGE_TYPES
         .iter()
@@ -83,7 +85,7 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
     let chrome = Chrome {
         tree,
         path,
-        site_title: site_title(tree),
+        site: &state.site,
         sidebar: &sidebar,
         banners: &banners,
     };
@@ -110,19 +112,21 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
         file,
         source: source_url.as_deref(),
     };
-    let title = index
-        .node(path)
-        .and_then(|node| node.title.clone())
-        .unwrap_or_else(|| last_segment(path));
+    let title = index.node(path).map_or_else(
+        || last_segment(path),
+        |node| render::label(node, path.rsplit('/').next().unwrap_or(path)),
+    );
     html_response(
         StatusCode::OK,
         render::page(&PageView {
             title: &title,
-            site_title: chrome.site_title,
+            site: chrome.site,
             body_html: &rendered.html,
             toc: &rendered.toc,
             sidebar_html: chrome.sidebar,
             breadcrumbs_html: &render::breadcrumbs(tree, path, &title),
+            trail_html: &render::trail(tree, path, &title),
+            pager_html: &render::pager(tree, path),
             banners_html: chrome.banners,
             action,
         }),
@@ -133,14 +137,9 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
 struct Chrome<'a> {
     tree: &'a PageNode,
     path: &'a str,
-    site_title: &'a str,
+    site: &'a render::Site,
     sidebar: &'a str,
     banners: &'a str,
-}
-
-/// The wiki's name in the header: the home page's first `# heading`, else `riki`.
-fn site_title(tree: &PageNode) -> &str {
-    tree.title.as_deref().unwrap_or("riki")
 }
 
 /// `/a/b.md` -> 301 `/a/b`; `/a/README.md` -> `/a`.
@@ -165,15 +164,18 @@ fn missing(chrome: &Chrome<'_>) -> Response {
     } else {
         ("<h1>Not found</h1>".to_string(), Action::None)
     };
+    let title = last_segment(path);
     html_response(
         StatusCode::NOT_FOUND,
         render::page(&PageView {
             title: "Not found",
-            site_title: chrome.site_title,
+            site: chrome.site,
             body_html: &body,
             toc: &[],
             sidebar_html: chrome.sidebar,
-            breadcrumbs_html: &render::breadcrumbs(chrome.tree, path, &last_segment(path)),
+            breadcrumbs_html: &render::breadcrumbs(chrome.tree, path, &title),
+            trail_html: &render::trail(chrome.tree, path, &title),
+            pager_html: "",
             banners_html: chrome.banners,
             action,
         }),
@@ -189,10 +191,10 @@ fn new_page_file(path: &str) -> String {
     }
 }
 
-/// The title of a page with no `# heading`: its last URL segment (`Home` for the root).
+/// The title of a path with no page node: its last URL segment, prettified (`Home` for the root).
 fn last_segment(path: &str) -> String {
     match path.rsplit('/').next() {
-        Some(last) if !last.is_empty() => last.to_string(),
+        Some(last) if !last.is_empty() => prettify(last),
         _ => "Home".to_string(),
     }
 }

@@ -1,7 +1,9 @@
-//! `GET /_riki/assets/{name}`: the page stylesheet and script, the editor bundle, and its
-//! stylesheet, compiled into the binary. All four are built from `editor/` and committed under
-//! `server/assets/`; otto's `editor` task fails when the committed files differ from a fresh
-//! build.
+//! `GET /_riki/assets/{name}`: the page stylesheet and script, the editor bundle, its
+//! stylesheet, and the bundled fonts, compiled into the binary. The four code assets are built
+//! from `editor/` and committed under `server/assets/`; otto's `editor` task fails when the
+//! committed files differ from a fresh build. The fonts (`server/assets/fonts/`) are Inter and
+//! JetBrains Mono variable woff2 subsets under the SIL Open Font License; each license sits beside
+//! its files.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::OnceLock;
@@ -17,7 +19,9 @@ pub struct Asset {
     pub bytes: &'static [u8],
 }
 
-pub const ASSETS: &[Asset] = &[
+/// A `static`, not a `const`: a `const` is instantiated at each use, and the 942755c release
+/// binary carried every embedded asset twice that way.
+pub static ASSETS: &[Asset] = &[
     Asset {
         name: "riki.css",
         content_type: "text/css; charset=utf-8",
@@ -37,6 +41,31 @@ pub const ASSETS: &[Asset] = &[
         name: "editor.css",
         content_type: "text/css; charset=utf-8",
         bytes: include_bytes!("../assets/editor.css"),
+    },
+    Asset {
+        name: "inter-latin-wght-normal.woff2",
+        content_type: "font/woff2",
+        bytes: include_bytes!("../assets/fonts/inter-latin-wght-normal.woff2"),
+    },
+    Asset {
+        name: "inter-latin-wght-italic.woff2",
+        content_type: "font/woff2",
+        bytes: include_bytes!("../assets/fonts/inter-latin-wght-italic.woff2"),
+    },
+    Asset {
+        name: "inter-latin-ext-wght-normal.woff2",
+        content_type: "font/woff2",
+        bytes: include_bytes!("../assets/fonts/inter-latin-ext-wght-normal.woff2"),
+    },
+    Asset {
+        name: "jetbrains-mono-latin-wght-normal.woff2",
+        content_type: "font/woff2",
+        bytes: include_bytes!("../assets/fonts/jetbrains-mono-latin-wght-normal.woff2"),
+    },
+    Asset {
+        name: "jetbrains-mono-latin-ext-wght-normal.woff2",
+        content_type: "font/woff2",
+        bytes: include_bytes!("../assets/fonts/jetbrains-mono-latin-ext-wght-normal.woff2"),
     },
 ];
 

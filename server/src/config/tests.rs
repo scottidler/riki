@@ -160,3 +160,91 @@ fn the_blob_url_comes_from_the_configured_remote_and_branch() {
         Some("https://github.com/o/r/blob/wiki/")
     );
 }
+
+#[test]
+fn site_name_defaults_to_the_prettified_repo_name() {
+    let config = Config::from_yaml(
+        "content:\n  remote: git@github.com:o/platform-handbook.git\n",
+        Some(home()),
+    )
+    .expect("loads");
+    assert_eq!(
+        config.site(),
+        Site {
+            name: "Platform handbook".to_string(),
+            logo: None
+        }
+    );
+}
+
+#[test]
+fn site_name_and_logo_come_from_the_config() {
+    let yaml =
+        format!("{MINIMAL}site:\n  name: Team Wiki\n  logo:\n    light: assets/light.svg\n    dark: assets/dark.png\n");
+    let site = Config::from_yaml(&yaml, Some(home())).expect("loads").site();
+    assert_eq!(site.name, "Team Wiki");
+    assert_eq!(
+        site.logo,
+        Some(Logo {
+            light: "assets/light.svg".to_string(),
+            dark: "assets/dark.png".to_string()
+        })
+    );
+}
+
+#[test]
+fn an_unknown_site_key_fails() {
+    let yaml = format!("{MINIMAL}site:\n  title: x\n");
+    let err = Config::from_yaml(&yaml, Some(home())).expect_err("must fail");
+    assert!(format!("{err:#}").contains("title"), "{err:#}");
+    let yaml = format!("{MINIMAL}site:\n  logo:\n    light: a.svg\n    dark: b.svg\n    href: /\n");
+    assert!(Config::from_yaml(&yaml, Some(home())).is_err());
+}
+
+#[test]
+fn a_logo_needs_both_variants() {
+    let yaml = format!("{MINIMAL}site:\n  logo:\n    light: a.svg\n");
+    let err = Config::from_yaml(&yaml, Some(home())).expect_err("must fail");
+    assert!(format!("{err:#}").contains("dark"), "{err:#}");
+}
+
+#[test]
+fn a_logo_must_be_a_servable_repo_image() {
+    for (light, needle) in [
+        ("logo.pdf", "not an image"),
+        ("../logo.svg", "not a repo path"),
+        ("/abs.svg", "not a repo path"),
+    ] {
+        let yaml = format!("{MINIMAL}site:\n  logo:\n    light: '{light}'\n    dark: d.svg\n");
+        let err = Config::from_yaml(&yaml, Some(home())).expect_err(light);
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("site.logo.light") && text.contains(needle),
+            "{light}: {text}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_site_name_fails() {
+    let yaml = format!("{MINIMAL}site:\n  name: '  '\n");
+    let err = Config::from_yaml(&yaml, Some(home())).expect_err("must fail");
+    assert!(format!("{err:#}").contains("site.name"), "{err:#}");
+}
+
+#[test]
+fn repo_names_come_from_any_remote_form() {
+    assert_eq!(repo_name("git@github.com:o/handbook.git"), Some("handbook"));
+    assert_eq!(repo_name("https://github.com/o/handbook"), Some("handbook"));
+    assert_eq!(repo_name("file:///srv/wiki.git/"), Some("wiki"));
+    assert_eq!(repo_name("handbook"), Some("handbook"));
+    assert_eq!(repo_name(""), None);
+    assert_eq!(repo_name("file:///srv/.git"), None);
+}
+
+#[test]
+fn the_shipped_example_names_the_site() {
+    let example = include_str!("../../../riki.example.yml");
+    let config = Config::from_yaml(example, Some(home())).expect("example loads");
+    assert_eq!(config.site().name, "Platform Handbook");
+}

@@ -2,17 +2,20 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   THEME_KEY,
   activeTocId,
-  applyTheme,
-  codeLanguage,
+  applyPreference,
+  choosePreference,
   copyFrom,
   copyText,
+  currentPreference,
   decorateCodeBlocks,
-  effectiveTheme,
+  markOverflow,
   markToc,
+  resolveTheme,
   setNavOpen,
-  storeTheme,
-  storedTheme,
-  toggleTheme,
+  storePreference,
+  storedPreference,
+  switchChoice,
+  toggleGroup,
   tocHeadings,
 } from '../src/page/ui'
 import type { ThemeStorage } from '../src/page/ui'
@@ -38,53 +41,85 @@ const throwing: ThemeStorage = {
 }
 
 describe('theme', () => {
-  it('reads only light or dark from storage', () => {
-    expect(storedTheme(memory({ [THEME_KEY]: 'dark' }))).toBe('dark')
-    expect(storedTheme(memory({ [THEME_KEY]: 'light' }))).toBe('light')
-    expect(storedTheme(memory({ [THEME_KEY]: 'purple' }))).toBeNull()
-    expect(storedTheme(memory())).toBeNull()
-    expect(storedTheme(null)).toBeNull()
+  const switchHtml =
+    '<button data-riki-theme="system"></button><button data-riki-theme="light"></button><button data-riki-theme="dark"></button>'
+
+  it('reads system, light, or dark from storage, defaulting to system', () => {
+    expect(storedPreference(memory({ [THEME_KEY]: 'dark' }))).toBe('dark')
+    expect(storedPreference(memory({ [THEME_KEY]: 'light' }))).toBe('light')
+    expect(storedPreference(memory({ [THEME_KEY]: 'system' }))).toBe('system')
+    expect(storedPreference(memory({ [THEME_KEY]: 'purple' }))).toBe('system')
+    expect(storedPreference(memory())).toBe('system')
+    expect(storedPreference(null)).toBe('system')
   })
 
-  it('treats storage that throws as no preference, and reports a failed write', () => {
-    expect(storedTheme(throwing)).toBeNull()
-    expect(storeTheme(throwing, 'dark')).toBe(false)
-    expect(storeTheme(null, 'dark')).toBe(false)
+  it('treats storage that throws as system, and reports a failed write', () => {
+    expect(storedPreference(throwing)).toBe('system')
+    expect(storePreference(throwing, 'dark')).toBe(false)
+    expect(storePreference(null, 'dark')).toBe(false)
     const store = memory()
-    expect(storeTheme(store, 'dark')).toBe(true)
-    expect(store.data[THEME_KEY]).toBe('dark')
+    expect(storePreference(store, 'system')).toBe(true)
+    expect(store.data[THEME_KEY]).toBe('system')
   })
 
-  it('pins and clears the theme on the root element', () => {
-    const root = document.createElement('html')
-    applyTheme(root, 'dark')
-    expect(root.dataset['theme']).toBe('dark')
-    applyTheme(root, null)
-    expect(root.hasAttribute('data-theme')).toBe(false)
+  it('resolves system against the OS and pins light or dark', () => {
+    expect(resolveTheme('system', true)).toBe('dark')
+    expect(resolveTheme('system', false)).toBe('light')
+    expect(resolveTheme('light', true)).toBe('light')
+    expect(resolveTheme('dark', false)).toBe('dark')
   })
 
-  it('follows the system until pinned', () => {
-    const root = document.createElement('html')
-    expect(effectiveTheme(root, true)).toBe('dark')
-    expect(effectiveTheme(root, false)).toBe('light')
-    applyTheme(root, 'light')
-    expect(effectiveTheme(root, true)).toBe('light')
+  it('sets the html class and preference, and presses the matching switch button', () => {
+    document.body.innerHTML = switchHtml
+    const root = document.documentElement
+    expect(applyPreference(root, 'system', true)).toBe('dark')
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(root.classList.contains('light')).toBe(false)
+    expect(root.dataset['themePreference']).toBe('system')
+    expect(currentPreference(root)).toBe('system')
+    const pressed = () =>
+      [...document.querySelectorAll('[data-riki-theme]')].map((b) => b.getAttribute('aria-pressed'))
+    expect(pressed()).toEqual(['true', 'false', 'false'])
+    applyPreference(root, 'light', true)
+    expect(root.classList.contains('light')).toBe(true)
+    expect(root.classList.contains('dark')).toBe(false)
+    expect(pressed()).toEqual(['false', 'true', 'false'])
   })
 
-  it('toggles away from what is shown and remembers it', () => {
-    const root = document.createElement('html')
+  it('choosing from the switch applies and remembers the choice', () => {
+    document.body.innerHTML = switchHtml
+    const root = document.documentElement
     const store = memory()
-    expect(toggleTheme(root, store, true)).toBe('light')
-    expect(root.dataset['theme']).toBe('light')
-    expect(store.data[THEME_KEY]).toBe('light')
-    expect(toggleTheme(root, store, true)).toBe('dark')
+    expect(choosePreference(root, store, 'dark', false)).toBe('dark')
     expect(store.data[THEME_KEY]).toBe('dark')
+    expect(currentPreference(root)).toBe('dark')
   })
 
-  it('still toggles the page when storage throws', () => {
-    const root = document.createElement('html')
-    expect(toggleTheme(root, throwing, false)).toBe('dark')
-    expect(root.dataset['theme']).toBe('dark')
+  it('still switches the page when storage throws', () => {
+    const root = document.documentElement
+    expect(choosePreference(root, throwing, 'dark', false)).toBe('dark')
+    expect(root.classList.contains('dark')).toBe(true)
+  })
+
+  it('knows which switch button was clicked', () => {
+    document.body.innerHTML = '<button data-riki-theme="light"><svg><path></path></svg></button><button data-riki-theme="x"></button>'
+    expect(switchChoice(document.querySelector('path'))).toBe('light')
+    expect(switchChoice(document.querySelector('[data-riki-theme="x"]'))).toBeNull()
+    expect(switchChoice(null)).toBeNull()
+  })
+})
+
+describe('sidebar groups', () => {
+  it('a chevron expands and collapses the list it controls', () => {
+    document.body.innerHTML =
+      '<button data-riki-toggle="group" aria-expanded="false" aria-controls="g"></button><ul id="g" hidden></ul>'
+    const button = document.querySelector<HTMLElement>('button')!
+    const list = document.getElementById('g')!
+    expect(toggleGroup(button)).toBe(true)
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(list.hidden).toBe(false)
+    expect(toggleGroup(button)).toBe(false)
+    expect(list.hidden).toBe(true)
   })
 })
 
@@ -103,28 +138,43 @@ describe('sidebar drawer', () => {
 describe('code blocks', () => {
   const page = () => {
     document.body.innerHTML =
-      '<article class="riki-prose"><pre class="syntax-highlighting"><code class="language-bash">echo hi\n</code></pre>' +
-      '<pre><code>plain</code></pre></article>' +
-      '<div class="riki-editor"><pre><code>in the editor</code></pre></div>'
+      '<article class="riki-prose"><div class="riki-code"><pre class="syntax-highlighting"><code class="language-bash">echo hi\n</code></pre></div>' +
+      '<div class="riki-code riki-code-titled"><div class="riki-code-head"><span class="riki-code-title">x.sh</span></div><pre><code>plain</code></pre></div></article>' +
+      '<div class="riki-editor"><div class="riki-code"><pre><code>in the editor</code></pre></div></div>'
   }
 
-  it('names the language a block declares', () => {
-    page()
-    const [bash, plain] = document.querySelectorAll('pre')
-    expect(codeLanguage(bash!)).toBe('bash')
-    expect(codeLanguage(plain!)).toBeNull()
-  })
-
-  it('wraps article code blocks once, leaving the editor alone', () => {
+  it('gives article code frames one copy button each, leaving the editor alone', () => {
     page()
     expect(decorateCodeBlocks(document)).toBe(2)
     expect(decorateCodeBlocks(document)).toBe(0)
-    const wraps = document.querySelectorAll('.riki-code')
-    expect(wraps).toHaveLength(2)
-    expect((wraps[0] as HTMLElement).dataset['lang']).toBe('bash')
-    expect((wraps[1] as HTMLElement).dataset['lang']).toBeUndefined()
-    expect(wraps[0]?.querySelector('button.riki-copy')?.getAttribute('aria-label')).toBe('Copy code')
-    expect(document.querySelector('.riki-editor .riki-code')).toBeNull()
+    const [plain, titled] = document.querySelectorAll('article .riki-code')
+    expect(plain?.querySelectorAll('.riki-copy')).toHaveLength(1)
+    expect(plain?.querySelector(':scope > .riki-copy')?.getAttribute('aria-label')).toBe('Copy code')
+    expect(titled?.querySelector('.riki-code-head > .riki-copy')).not.toBeNull()
+    expect(document.querySelector('.riki-editor .riki-copy')).toBeNull()
+  })
+
+  it('an untitled block gets the fade, a titled one does not, and no language label', () => {
+    page()
+    decorateCodeBlocks(document)
+    const [plain, titled] = document.querySelectorAll<HTMLElement>('article .riki-code')
+    expect(plain?.querySelector(':scope > .riki-code-fade')?.getAttribute('aria-hidden')).toBe('true')
+    expect(titled?.querySelector('.riki-code-fade')).toBeNull()
+    expect(plain?.dataset['lang']).toBeUndefined()
+    expect(document.body.textContent).not.toContain('bash')
+  })
+
+  it('flags a block whose code is wider than its box', () => {
+    page()
+    const wrap = document.querySelector<HTMLElement>('article .riki-code')!
+    const pre = wrap.querySelector('pre')!
+    Object.defineProperty(pre, 'clientWidth', { value: 300, configurable: true })
+    Object.defineProperty(pre, 'scrollWidth', { value: 800, configurable: true })
+    expect(markOverflow(wrap)).toBe(true)
+    expect(wrap.hasAttribute('data-overflow')).toBe(true)
+    Object.defineProperty(pre, 'scrollWidth', { value: 300, configurable: true })
+    expect(markOverflow(wrap)).toBe(false)
+    expect(wrap.hasAttribute('data-overflow')).toBe(false)
   })
 
   it('copies the code text, not the button', async () => {
@@ -135,6 +185,15 @@ describe('code blocks', () => {
     expect(await copyFrom(button, { writeText })).toBe(true)
     expect(writeText).toHaveBeenCalledWith('echo hi\n')
     expect(button.hasAttribute('data-copied')).toBe(true)
+  })
+
+  it('a titled block copies its code, not its title', async () => {
+    page()
+    decorateCodeBlocks(document)
+    const writeText = vi.fn(async () => {})
+    const button = document.querySelector<HTMLElement>('.riki-code-head .riki-copy')!
+    expect(await copyFrom(button, { writeText })).toBe(true)
+    expect(writeText).toHaveBeenCalledWith('plain')
   })
 
   it('reports a copy that no clipboard path took', async () => {

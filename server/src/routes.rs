@@ -20,6 +20,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{Level, Span, debug, error, warn};
 
 use crate::config::{CommitterConfig, GitConfig, IdentityConfig};
+use crate::render::Site;
 use crate::{api, assets, pages};
 
 /// Compile-time git facts from this crate's `build.rs` (`env!` must resolve in the crate whose
@@ -39,6 +40,8 @@ pub struct AppState {
     pub(crate) save: Arc<SaveSettings>,
     /// GitHub blob URL prefix for content files, when the remote is on GitHub.
     pub(crate) github_blob_base: Option<Arc<str>>,
+    /// The wiki's name and logo for the header and `<title>`.
+    pub(crate) site: Arc<Site>,
 }
 
 impl AppState {
@@ -49,7 +52,14 @@ impl AppState {
             identity: Arc::new(IdentityConfig::default()),
             save: Arc::new(save_settings(&CommitterConfig::default(), &GitConfig::default())),
             github_blob_base: None,
+            site: Arc::new(Site::default()),
         }
+    }
+
+    /// Show this site name and logo instead of the default (`riki`, no logo).
+    pub fn with_site(mut self, site: Site) -> Self {
+        self.site = Arc::new(site);
+        self
     }
 
     /// Link content files on GitHub under this prefix (`Config::github_blob_base`).

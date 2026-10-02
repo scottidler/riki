@@ -23,3 +23,9 @@ identity:
   mode: header
   email-header: Remote-Email   # required on writes
   name-header: Remote-Name     # optional; falls back to the email
+
+site:                          # optional; how the wiki names itself in the header and <title>
+  name: Platform Handbook      # default: the content repo's name, prettified (platform-handbook -> Platform handbook)
+  # logo:                      # optional; shown instead of the name. Repo-relative image files (png, jpg, gif, webp, svg)
+  #   light: assets/logo-light.svg
+  #   dark: assets/logo-dark.svg

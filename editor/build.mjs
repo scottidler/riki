@@ -38,4 +38,6 @@ await build({
   ...common,
   entryPoints: ['src/theme/riki.css'],
   outfile: '../server/assets/riki.css',
+  // The fonts are served by riki itself (server/assets/fonts/), not bundled into the CSS.
+  external: ['/_riki/assets/*'],
 })

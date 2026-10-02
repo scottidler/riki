@@ -189,6 +189,22 @@ pub fn url_for_file(file: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+/// A file or folder name as a label, sentence case: `-` and `_` become spaces (runs collapse), the
+/// first letter is capitalized, and the rest is kept as written. `getting-started` ->
+/// `Getting started`, `API_v2` -> `API v2`.
+pub fn prettify(name: &str) -> String {
+    let spaced = name
+        .split(['-', '_', ' '])
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 fn is_hidden(raw: &[u8]) -> bool {
     raw.split(|b| *b == b'/').any(|segment| segment.first() == Some(&b'.'))
 }
@@ -308,6 +324,22 @@ mod tests {
         assert!(line.contains("reserved name /status"), "{line}");
         assert!(line.contains("; "), "{line}");
         assert!(line.contains("map to /a"), "{line}");
+    }
+
+    #[test]
+    fn prettify_turns_names_into_sentence_case_labels() {
+        assert_eq!(prettify("reference"), "Reference");
+        assert_eq!(prettify("getting-started"), "Getting started");
+        assert_eq!(prettify("release_notes"), "Release notes");
+        assert_eq!(prettify("API_v2"), "API v2");
+        assert_eq!(prettify("a--b__c"), "A b c");
+        assert_eq!(prettify("été"), "Été");
+    }
+
+    #[test]
+    fn prettify_of_nothing_is_empty() {
+        assert_eq!(prettify(""), "");
+        assert_eq!(prettify("--"), "");
     }
 
     #[test]

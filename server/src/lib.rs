@@ -43,7 +43,9 @@ pub async fn run(config: Config) -> Result<()> {
     let poller = poller::spawn(wiki.clone(), config.git.poll_interval);
     let save = routes::save_settings(&config.committer, &config.git);
     let github_blob_base = config.github_blob_base();
+    let site = config.site();
     let state = routes::AppState::new(runtime.clone(), wiki)
+        .with_site(site)
         .with_identity(config.identity)
         .with_save(save)
         .with_github_blob_base(github_blob_base);

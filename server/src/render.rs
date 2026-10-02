@@ -1,8 +1,8 @@
 //! Pure HTML assembly for the shell: templates filled with already-rendered pieces. No axum, no
 //! IO; every value that reaches a template is escaped here or comes from comrak's safe mode.
 
-use riki_core::index::PageNode;
-use riki_core::render::{TocEntry, encode_path, escape_html};
+use riki_core::index::{PageNode, prettify};
+use riki_core::render::{RAW_PREFIX, TocEntry, encode_path, escape_html};
 use riki_core::wiki::{Rejected, Unreachable};
 use tracing::debug;
 
@@ -10,10 +10,10 @@ const PAGE_TEMPLATE: &str = include_str!("../templates/page.html");
 const ERROR_TEMPLATE: &str = include_str!("../templates/error.html");
 
 /// CSP for rendered pages: same-origin script (the editor bundle at `/_riki/assets/`), same-origin
-/// stylesheets plus the template's inline style, images from this origin, `https:` or `data:`.
-/// Nothing else loads.
+/// stylesheets plus the template's inline style, same-origin fonts (the bundled Inter and
+/// JetBrains Mono), images from this origin, `https:` or `data:`. Nothing else loads.
 pub const CSP_PAGE: &str = "default-src 'none'; script-src 'self'; connect-src 'self'; \
-img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'";
+img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors 'self'";
 
 /// CSP for `/_riki/raw/` responses: marquee's `CSP_ASSET`. An SVG served from here cannot run
 /// script against the save API.
@@ -60,18 +60,69 @@ pub enum Action<'a> {
     Create { file: &'a str },
 }
 
+/// The wiki's identity: the name in the header and the `<title>` suffix, and optionally a logo
+/// per theme that the header shows instead of the name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    pub name: String,
+    pub logo: Option<Logo>,
+}
+
+/// Repo-relative image files, served through `/_riki/raw/`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Logo {
+    pub light: String,
+    pub dark: String,
+}
+
+impl Default for Site {
+    fn default() -> Self {
+        Self {
+            name: "riki".to_string(),
+            logo: None,
+        }
+    }
+}
+
+/// The header's home link: both logo variants (the stylesheet shows the one for the current
+/// theme) with the name for screen readers, or the name as text when there is no logo.
+pub fn brand(site: &Site) -> String {
+    let name = escape_html(&site.name);
+    match &site.logo {
+        Some(logo) => format!(
+            concat!(
+                r#"<a class="riki-brand" href="/">"#,
+                r#"<img class="riki-logo riki-logo-light" src="{}" alt="">"#,
+                r#"<img class="riki-logo riki-logo-dark" src="{}" alt="">"#,
+                r#"<span class="riki-sr-only">{}</span></a>"#
+            ),
+            escape_html(&raw_url(&logo.light)),
+            escape_html(&raw_url(&logo.dark)),
+            name
+        ),
+        None => format!(r#"<a class="riki-brand" href="/"><span class="riki-brand-name">{name}</span></a>"#),
+    }
+}
+
+fn raw_url(file: &str) -> String {
+    format!("{RAW_PREFIX}{}", encode_path(file))
+}
+
 /// Everything a full page shows. Every `_html` field is already safe HTML (comrak's safe mode or
 /// built by this module); plain-text fields are escaped here.
 #[derive(Debug, Clone, Copy)]
 pub struct PageView<'a> {
-    /// The page's own title (its first `# heading`, else its URL segment).
+    /// The page's own title ([`label`] of its node).
     pub title: &'a str,
-    /// The wiki's title: the home page's first `# heading`, else `riki`.
-    pub site_title: &'a str,
+    pub site: &'a Site,
     pub body_html: &'a str,
     pub toc: &'a [TocEntry],
     pub sidebar_html: &'a str,
     pub breadcrumbs_html: &'a str,
+    /// The narrow-screen bar under the header: the drawer button and "Section > Page".
+    pub trail_html: &'a str,
+    /// Previous / Next cards under the article.
+    pub pager_html: &'a str,
     pub banners_html: &'a str,
     pub action: Action<'a>,
 }
@@ -97,12 +148,15 @@ pub fn page(view: &PageView<'_>) -> String {
         PAGE_TEMPLATE,
         &[
             ("__TITLE__", &escape_html(view.title)),
-            ("__SITE__", &escape_html(view.site_title)),
+            ("__SITE__", &escape_html(&view.site.name)),
+            ("__BRAND__", &brand(view.site)),
             ("__ACTION__", &action_html),
+            ("__TRAIL__", view.trail_html),
             ("__BANNERS__", view.banners_html),
             ("__SIDEBAR__", view.sidebar_html),
             ("__BREADCRUMBS__", view.breadcrumbs_html),
             ("__BODY__", view.body_html),
+            ("__PAGER__", view.pager_html),
             ("__TOC__", &toc(view.toc)),
         ],
     )
@@ -167,29 +221,100 @@ pub fn banners(rejected: Option<&Rejected>, unreachable: Option<&Unreachable>) -
     out
 }
 
-/// The label a node shows: its page title, else its URL segment (`Home` for the root).
-pub fn label<'a>(node: &'a PageNode, segment: &'a str) -> &'a str {
+/// The label a node shows: its page title (front matter `title`, else first H1; for a directory,
+/// its README's), else its prettified URL segment, else `Home` for the root.
+pub fn label(node: &PageNode, segment: &str) -> String {
     match &node.title {
-        Some(title) => title,
-        None if node.url.is_empty() => "Home",
-        None => segment,
+        Some(title) => title.clone(),
+        None if node.url.is_empty() => "Home".to_string(),
+        None => prettify(segment),
     }
 }
 
-/// The sidebar: the home page and top-level pages as links, then one collapsible section per
-/// directory. A directory with a `README.md` heads its section with a link to it; one without is
-/// a plain label. `current` is the URL path of the page being shown (no leading `/`).
-pub fn sidebar(root: &PageNode, current: &str) -> String {
-    let mut out = String::from(r#"<ul class="riki-nav-list">"#);
+/// One sidebar entry: a page link or a directory group. Built once, so the sidebar and the
+/// Previous / Next order can never disagree.
+enum NavItem<'a> {
+    Page {
+        node: &'a PageNode,
+        label: String,
+    },
+    Group {
+        node: &'a PageNode,
+        label: String,
+        items: Vec<NavItem<'a>>,
+    },
+}
+
+/// The sidebar's entries: the home page (labelled `Home`) and top-level pages, then one group per
+/// top-level directory. Inside a group, pages and sub-groups follow in name order.
+fn nav_items(root: &PageNode) -> Vec<NavItem<'_>> {
+    let mut items = Vec::new();
     if root.file.is_some() {
-        out.push_str(&format!("<li>{}</li>", link(root, "Home", current)));
+        items.push(NavItem::Page {
+            node: root,
+            label: "Home".to_string(),
+        });
     }
     for (segment, child) in root.children.iter().filter(|(_, child)| child.children.is_empty()) {
-        out.push_str(&format!("<li>{}</li>", link(child, label(child, segment), current)));
+        items.push(NavItem::Page {
+            node: child,
+            label: label(child, segment),
+        });
+    }
+    for (segment, child) in root.children.iter().filter(|(_, child)| !child.children.is_empty()) {
+        items.push(group(segment, child));
+    }
+    items
+}
+
+fn group<'a>(segment: &str, node: &'a PageNode) -> NavItem<'a> {
+    let items = node
+        .children
+        .iter()
+        .map(|(child_segment, child)| {
+            if child.children.is_empty() {
+                NavItem::Page {
+                    node: child,
+                    label: label(child, child_segment),
+                }
+            } else {
+                group(child_segment, child)
+            }
+        })
+        .collect();
+    NavItem::Group {
+        node,
+        label: label(node, segment),
+        items,
+    }
+}
+
+/// The sidebar. Top-level directories are static group headers (a link when the directory has a
+/// `README.md`); nested directories collapse behind a chevron button (`aria-expanded`), open
+/// only along the path to the current page. `current` is the URL path being shown (no leading
+/// `/`).
+pub fn sidebar(root: &PageNode, current: &str) -> String {
+    let items = nav_items(root);
+    let mut out = String::from(r#"<ul class="riki-nav-list">"#);
+    for item in items.iter().filter(|item| matches!(item, NavItem::Page { .. })) {
+        out.push_str(&nav_item(item, current));
     }
     out.push_str("</ul>");
-    for (segment, child) in root.children.iter().filter(|(_, child)| !child.children.is_empty()) {
-        out.push_str(&section(segment, child, current, true));
+    for item in &items {
+        let NavItem::Group { node, label, items } = item else {
+            continue;
+        };
+        let head = match node.file {
+            Some(_) => link(node, label, current),
+            None => escape_html(label),
+        };
+        out.push_str(&format!(
+            r#"<div class="riki-nav-group"><p class="riki-nav-heading">{head}</p><ul class="riki-nav-list">"#
+        ));
+        for child in items {
+            out.push_str(&nav_item(child, current));
+        }
+        out.push_str("</ul></div>");
     }
     out
 }
@@ -198,28 +323,39 @@ fn contains(node: &PageNode, current: &str) -> bool {
     current == node.url || current.starts_with(&format!("{}/", node.url))
 }
 
-/// A directory as `<details>`: open at the top level and along the path to the current page.
-fn section(segment: &str, node: &PageNode, current: &str, top: bool) -> String {
-    let open = if top || contains(node, current) { " open" } else { "" };
-    let head = if node.file.is_some() {
-        link(node, label(node, segment), current)
-    } else {
-        format!(r#"<span class="riki-nav-label">{}</span>"#, escape_html(segment))
-    };
-    let mut out =
-        format!(r#"<details class="riki-nav-section"{open}><summary>{head}</summary><ul class="riki-nav-list">"#);
-    for (child_segment, child) in &node.children {
-        if child.children.is_empty() {
-            out.push_str(&format!(
-                "<li>{}</li>",
-                link(child, label(child, child_segment), current)
-            ));
-        } else {
-            out.push_str(&format!("<li>{}</li>", section(child_segment, child, current, false)));
+/// One `<li>`: a page link, or a nested group with its chevron and (possibly hidden) list.
+fn nav_item(item: &NavItem<'_>, current: &str) -> String {
+    match item {
+        NavItem::Page { node, label } => format!("<li>{}</li>", link(node, label, current)),
+        NavItem::Group { node, label, items } => {
+            let open = contains(node, current);
+            let list_id = format!("riki-nav-{}", encode_path(&node.url));
+            let toggle = |class: &str, text: &str| {
+                format!(
+                    r#"<button type="button" class="{class}" data-riki-toggle="group" aria-expanded="{open}" aria-controls="{}" aria-label="{}">{text}</button>"#,
+                    escape_html(&list_id),
+                    escape_html(label)
+                )
+            };
+            let head = match node.file {
+                Some(_) => format!("{}{}", link(node, label, current), toggle("riki-nav-chevron", "")),
+                None => toggle(
+                    "riki-nav-chevron riki-nav-sub-label",
+                    &format!("<span>{}</span>", escape_html(label)),
+                ),
+            };
+            let hidden = if open { "" } else { " hidden" };
+            let mut out = format!(
+                r#"<li class="riki-nav-sub"><div class="riki-nav-sub-head">{head}</div><ul class="riki-nav-list" id="{}"{hidden}>"#,
+                escape_html(&list_id)
+            );
+            for child in items {
+                out.push_str(&nav_item(child, current));
+            }
+            out.push_str("</ul></li>");
+            out
         }
     }
-    out.push_str("</ul></details>");
-    out
 }
 
 fn link(node: &PageNode, label: &str, current: &str) -> String {
@@ -233,6 +369,84 @@ fn link(node: &PageNode, label: &str, current: &str) -> String {
         escape_html(&encode_path(&node.url)),
         escape_html(label)
     )
+}
+
+/// Every page in sidebar order, with its sidebar label: the order Previous / Next walks.
+pub fn reading_order(root: &PageNode) -> Vec<(&PageNode, String)> {
+    fn walk<'a>(item: &NavItem<'a>, out: &mut Vec<(&'a PageNode, String)>) {
+        match item {
+            NavItem::Page { node, label } => out.push((node, label.clone())),
+            NavItem::Group { node, label, items } => {
+                if node.file.is_some() {
+                    out.push((node, label.clone()));
+                }
+                for child in items {
+                    walk(child, out);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for item in &nav_items(root) {
+        walk(item, &mut out);
+    }
+    out
+}
+
+/// Previous / Next cards for the page at `current`, in sidebar order. Empty when `current` is
+/// not a page (a 404) or is the only one.
+pub fn pager(root: &PageNode, current: &str) -> String {
+    let order = reading_order(root);
+    let Some(at) = order.iter().position(|(node, _)| node.url == current) else {
+        return String::new();
+    };
+    let card = |(node, label): &(&PageNode, String), class: &str, word: &str| {
+        format!(
+            r#"<a class="riki-pager-card {class}" href="/{}"><span class="riki-pager-label">{word}</span><span class="riki-pager-title">{}</span></a>"#,
+            escape_html(&encode_path(&node.url)),
+            escape_html(label)
+        )
+    };
+    let prev = at.checked_sub(1).and_then(|i| order.get(i));
+    let next = order.get(at + 1);
+    if prev.is_none() && next.is_none() {
+        return String::new();
+    }
+    let mut out = String::from(r#"<nav class="riki-pager" aria-label="Previous and next pages">"#);
+    if let Some(prev) = prev {
+        out.push_str(&card(prev, "riki-pager-prev", "Previous"));
+    }
+    if let Some(next) = next {
+        out.push_str(&card(next, "riki-pager-next", "Next"));
+    }
+    out.push_str("</nav>");
+    out
+}
+
+/// The narrow-screen bar under the header: the drawer button, then the page's section (its
+/// parent directory) and the page itself.
+pub fn trail(root: &PageNode, path: &str, title: &str) -> String {
+    let mut out = String::from(concat!(
+        r#"<div class="riki-trail">"#,
+        r#"<button type="button" class="riki-icon-button riki-nav-toggle" data-riki-toggle="nav" aria-label="Show pages" aria-controls="riki-nav" aria-expanded="false">"#,
+        r#"<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg></button>"#,
+        r#"<ol class="riki-trail-path">"#
+    ));
+    if let Some((parent, _)) = path.rsplit_once('/') {
+        let segment = parent.rsplit('/').next().unwrap_or(parent);
+        let section = node_at(root, parent).map_or_else(|| prettify(segment), |dir| label(dir, segment));
+        out.push_str(&format!("<li>{}</li>", escape_html(&section)));
+    }
+    out.push_str(&format!(
+        r#"<li aria-current="page">{}</li></ol></div>"#,
+        escape_html(title)
+    ));
+    out
+}
+
+fn node_at<'a>(root: &'a PageNode, url: &str) -> Option<&'a PageNode> {
+    url.split('/')
+        .try_fold(root, |node, segment| node.children.get(segment))
 }
 
 /// Breadcrumbs for the page at `path`: Home, then every ancestor directory (a link when it has a
@@ -254,10 +468,10 @@ pub fn breadcrumbs(root: &PageNode, path: &str, title: &str) -> String {
             Some(dir) if dir.file.is_some() => out.push_str(&format!(
                 r#"<li><a href="/{}">{}</a></li>"#,
                 escape_html(&encode_path(&dir.url)),
-                escape_html(label(dir, segment))
+                escape_html(&label(dir, segment))
             )),
-            Some(dir) => out.push_str(&format!("<li>{}</li>", escape_html(label(dir, segment)))),
-            None => out.push_str(&format!("<li>{}</li>", escape_html(segment))),
+            Some(dir) => out.push_str(&format!("<li>{}</li>", escape_html(&label(dir, segment)))),
+            None => out.push_str(&format!("<li>{}</li>", escape_html(&prettify(segment)))),
         }
     }
     out.push_str(&format!(r#"<li aria-current="page">{}</li>"#, escape_html(title)));

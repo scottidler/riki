@@ -123,7 +123,7 @@ fn an_alert_title_is_escaped_text() {
 #[test]
 fn golden_code_is_highlighted_into_prefixed_classes_not_inline_styles() {
     let html = html("README.md", "```rust\nfn main() {}\n```\n");
-    assert_eq!(html, GOLDEN_RUST);
+    assert_eq!(html, format!("<div class=\"riki-code\">\n{GOLDEN_RUST}</div>\n"));
     assert!(!html.contains("style="), "{html}");
 }
 
@@ -146,10 +146,54 @@ const GOLDEN_RUST: &str = concat!(
 fn code_without_a_known_language_is_plain_text_and_still_escaped() {
     for source in ["```\n<b>&\n```\n", "```nosuchlang\n<b>&\n```\n"] {
         let html = html("README.md", source);
-        assert!(html.starts_with("<pre class=\"syntax-highlighting\"><code"), "{html}");
+        assert!(
+            html.starts_with("<div class=\"riki-code\">\n<pre class=\"syntax-highlighting\"><code"),
+            "{html}"
+        );
         assert!(html.contains("hl-text hl-plain"), "{html}");
         assert!(html.contains("&lt;b&gt;&amp;"), "{html}");
     }
+}
+
+#[test]
+fn a_fence_title_gets_a_header_bar_and_the_language_is_not_shown() {
+    let html = html("README.md", "```rust title=\"src/<main>.rs\"\nfn main() {}\n```\n");
+    assert!(
+        html.starts_with(concat!(
+            r#"<div class="riki-code riki-code-titled"><div class="riki-code-head">"#,
+            r#"<span class="riki-code-title">src/&lt;main&gt;.rs</span></div>"#,
+            "\n<pre class=\"syntax-highlighting\"><code class=\"language-rust\">"
+        )),
+        "{html}"
+    );
+    assert!(html.contains("hl-rust"), "still highlighted as rust: {html}");
+    assert!(!html.contains("data-lang"), "{html}");
+}
+
+#[test]
+fn indented_code_is_framed_too() {
+    let html = html("README.md", "    plain\n");
+    assert!(html.starts_with("<div class=\"riki-code\">\n<pre"), "{html}");
+    assert!(html.trim_end().ends_with("</pre>\n</div>"), "{html}");
+}
+
+#[test]
+fn code_title_reads_the_info_string() {
+    assert_eq!(code_title("bash title=\"install.sh\"").as_deref(), Some("install.sh"));
+    assert_eq!(code_title("bash title='a b'").as_deref(), Some("a b"));
+    assert_eq!(code_title("bash {1,3} title=x.sh").as_deref(), Some("x.sh"));
+    assert_eq!(code_title("rust src/main.rs").as_deref(), Some("src/main.rs"));
+    assert_eq!(code_title("js Example title").as_deref(), Some("Example title"));
+}
+
+#[test]
+fn code_title_is_none_for_a_bare_language_or_attributes() {
+    assert_eq!(code_title(""), None);
+    assert_eq!(code_title("rust"), None);
+    assert_eq!(code_title("rust   "), None);
+    assert_eq!(code_title("rust {1,3}"), None);
+    assert_eq!(code_title("rust lines=1"), None);
+    assert_eq!(code_title("rust title=\"\""), None);
 }
 
 #[test]
@@ -210,11 +254,38 @@ fn page_title_is_the_first_level_one_heading() {
         Some("This one")
     );
     assert_eq!(
-        page_title("---\ntitle: x\n---\n# After front matter\n").as_deref(),
-        Some("After front matter")
+        page_title("---\nauthor: x\n---\n# After front matter\n").as_deref(),
+        Some("After front matter"),
+        "front matter without a title falls through to the H1"
     );
     assert_eq!(page_title("Setext\n======\n").as_deref(), Some("Setext"));
     assert_eq!(page_title("> # Quoted\n").as_deref(), Some("Quoted"));
+}
+
+#[test]
+fn page_title_prefers_the_front_matter_title_over_the_h1() {
+    assert_eq!(
+        page_title("---\ntitle: Short\n---\n# Long heading\n").as_deref(),
+        Some("Short")
+    );
+    assert_eq!(
+        page_title("---\ntitle: \"Quoted: yes\"\n---\n").as_deref(),
+        Some("Quoted: yes")
+    );
+    assert_eq!(page_title("---\ntitle: 'Single'\n---\n").as_deref(), Some("Single"));
+}
+
+#[test]
+fn page_title_ignores_nested_and_empty_front_matter_titles() {
+    assert_eq!(
+        page_title("---\nmeta:\n  title: nested\n---\n# Heading\n").as_deref(),
+        Some("Heading")
+    );
+    assert_eq!(
+        page_title("---\ntitle: \"\"\n---\n# Heading\n").as_deref(),
+        Some("Heading")
+    );
+    assert_eq!(page_title("---\ntitle:\n---\n"), None);
 }
 
 #[test]

@@ -5,7 +5,7 @@ import { Session } from './session'
 import type { PageTarget } from './session'
 
 /** The pieces of a rendered riki page the editor replaces after a save. */
-const SWAPPED = ['header .actions', '.riki-sidebar', 'main']
+const SWAPPED = ['header .actions', '.riki-trail', '.riki-sidebar', 'main']
 
 /** On `<body>` while a session is open (the stylesheet hides the "On this page" list). */
 const EDITING_CLASS = 'riki-editing'
