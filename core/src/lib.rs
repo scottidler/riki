@@ -8,6 +8,7 @@ pub mod runtime;
 pub mod save;
 pub mod store;
 pub mod wiki;
+pub mod write;
 
 /// Commit and blob ids, as used throughout riki-core's API.
 pub use git2::Oid;

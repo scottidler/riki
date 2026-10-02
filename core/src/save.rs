@@ -1,15 +1,14 @@
-//! The save algorithm (design doc, API Design, steps 2-8). Step 1 (JSON and identity guards) is
-//! the HTTP shell's. The repo mutex is held from the fetch (step 3) until the outcome is decided,
-//! and every success path publishes, so a 200 means the next GET on this replica renders the page
-//! as saved.
+//! The save algorithm (design doc, API Design, steps 2-8) as the `Edit` op. Step 1 (JSON and
+//! identity guards) is the HTTP shell's; step 2 is here; steps 3, 7, 8 are the write driver's
+//! (`crate::write`); steps 4-6 are `Edit::check_and_build`.
 
 use git2::Oid;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::index::ErrorList;
 use crate::page::{self, NEW_PAGE_TRAILING, StaticRule};
-use crate::store::{FileCommit, PushOutcome, RepoGuard, Signer, StoreError};
-use crate::wiki::{PublishOutcome, Wiki};
+use crate::store::{FileCommit, Signer, StoreError};
+use crate::wiki::Wiki;
+use crate::write::{self, Check, Fetched, WriteOp, WriteOutcome};
 
 /// What a save needs from config.
 #[derive(Debug, Clone)]
@@ -62,7 +61,7 @@ pub enum SaveOutcome {
     PushFailed(String),
 }
 
-/// Run the save algorithm for `request` authored by `author`.
+/// Run the save algorithm for `request` authored by `author`: the `Edit` op on the write driver.
 pub async fn save(
     wiki: &Wiki,
     settings: &SaveSettings,
@@ -82,103 +81,73 @@ pub async fn save(
         Ok(message) => message,
         Err(err) => return Ok(SaveOutcome::BadRequest(err)),
     };
-    let store = wiki.store();
-    let guard = store.lock().await;
-    let mut retries = 0;
-    loop {
-        // Step 3.
-        if let Err(err) = wiki.fetch(&guard).await {
-            warn!("save: fetch failed: {err}");
-            return Ok(SaveOutcome::FetchFailed(err.to_string()));
-        }
-        let Some(tip) = store.tip().await? else {
-            return Ok(SaveOutcome::NoTip);
-        };
+    let op = Edit { request, message };
+    Ok(match write::run(wiki, settings, author, &op).await? {
+        WriteOutcome::Pushed { commit } => SaveOutcome::Saved { commit },
+        WriteOutcome::Op(outcome) => outcome,
+        WriteOutcome::IndexConflict { errors } => SaveOutcome::IndexConflict { errors },
+        WriteOutcome::RetriesExhausted { attempts, line } => SaveOutcome::RetriesExhausted { attempts, line },
+        WriteOutcome::FetchFailed(message) => SaveOutcome::FetchFailed(message),
+        WriteOutcome::NoTip => SaveOutcome::NoTip,
+        WriteOutcome::PushTimedOut(message) => SaveOutcome::PushTimedOut(message),
+        WriteOutcome::PushFailed(stderr) => SaveOutcome::PushFailed(stderr),
+    })
+}
+
+/// Edit or create one page: upsert its body under the stored front matter.
+struct Edit<'a> {
+    request: &'a SaveRequest,
+    message: String,
+}
+
+impl WriteOp for Edit<'_> {
+    type Outcome = SaveOutcome;
+
+    async fn check_and_build(&self, at: &Fetched<'_>) -> Result<Check<SaveOutcome>, StoreError> {
+        let request = self.request;
         // Step 4.
-        let current = store.blob_at(tip, &request.path).await?;
+        let current = at.store.blob_at(at.tip, &request.path).await?;
         let new = match &current {
             Some((_, bytes)) => match page::check_static_rules(bytes) {
                 Ok(text) => {
                     let split = page::split_front_matter(text);
                     page::compose(split.front_matter, &request.body, page::trailing_newlines(text))
                 }
-                Err(rule) => return Ok(SaveOutcome::NotEditable(rule)),
+                Err(rule) => return Ok(Check::Refused(SaveOutcome::NotEditable(rule))),
             },
             None => page::compose("", &request.body, NEW_PAGE_TRAILING),
         };
         let current_oid = current.as_ref().map(|(oid, _)| *oid);
         let holds_new = current.as_ref().is_some_and(|(_, bytes)| *bytes == new.as_bytes());
         if current_oid != request.base_oid {
-            let refused = publish_tip(wiki, &guard, tip).await?;
             if holds_new {
-                if let Some(errors) = refused {
-                    return Ok(SaveOutcome::IndexConflict { errors });
-                }
-                info!("save: {} already holds the content at {tip}", request.path);
-                return Ok(SaveOutcome::ContentPresent);
+                info!("save: {} already holds the content at {}", request.path, at.tip);
+                return Ok(Check::NoCommit(SaveOutcome::ContentPresent));
             }
             info!(
                 "save: {} moved ({:?} -> {current_oid:?}), conflict",
                 request.path, request.base_oid
             );
             let current_body = current.map(|(_, bytes)| current_body(&bytes));
-            return Ok(SaveOutcome::Conflict { current_body });
+            return Ok(Check::Conflict(SaveOutcome::Conflict { current_body }));
         }
         // Step 5.
         if holds_new {
-            if let Some(errors) = publish_tip(wiki, &guard, tip).await? {
-                return Ok(SaveOutcome::IndexConflict { errors });
-            }
-            return Ok(SaveOutcome::Unchanged);
+            return Ok(Check::NoCommit(SaveOutcome::Unchanged));
         }
         // Step 6.
-        let commit = store
+        let commit = at
+            .store
             .commit_file(FileCommit {
-                parent: tip,
+                parent: at.tip,
                 path: &request.path,
                 contents: new.as_bytes(),
-                author,
-                committer: &settings.committer,
-                message: &message,
+                author: at.author,
+                committer: at.committer,
+                message: &self.message,
             })
             .await?;
-        // Step 7.
-        let index = wiki.index(commit).await?;
-        if !index.is_publishable() {
-            let errors = ErrorList(index.errors()).to_string();
-            warn!("save: {commit} would not publish, not pushing: {errors}");
-            return Ok(SaveOutcome::IndexConflict { errors });
-        }
-        // Step 8.
-        match store.push(&guard, commit).await {
-            Ok(PushOutcome::Pushed) => {
-                store.set_tip(&guard, commit).await?;
-                wiki.publish(&guard, commit).await?;
-                return Ok(SaveOutcome::Saved { commit });
-            }
-            Ok(PushOutcome::NonFastForward { line }) if retries < settings.push_retries => {
-                retries += 1;
-                info!(
-                    "save: push rejected ({line}), retry {retries} of {}",
-                    settings.push_retries
-                );
-            }
-            Ok(PushOutcome::NonFastForward { line }) => {
-                return Ok(SaveOutcome::RetriesExhausted {
-                    attempts: retries + 1,
-                    line,
-                });
-            }
-            Err(err @ StoreError::Timeout { .. }) => {
-                warn!("save: push outcome unknown: {err}");
-                return Ok(SaveOutcome::PushTimedOut(err.to_string()));
-            }
-            Err(StoreError::Failed { stderr, .. }) => {
-                warn!("save: push failed: {stderr}");
-                return Ok(SaveOutcome::PushFailed(stderr));
-            }
-            Err(err) => return Err(err),
-        }
+        Ok(Check::Committed(commit))
     }
 }
 
@@ -198,22 +167,6 @@ fn commit_message(request: &SaveRequest) -> Result<String, String> {
 fn current_body(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     page::split_front_matter(&text).body.to_string()
-}
-
-/// Publish the fetched tip unless it is already the good tip. `Some(errors)` when the tip's nav
-/// index refuses publish: the good tip did not move, so no 200 may be returned on top of it.
-async fn publish_tip(wiki: &Wiki, guard: &RepoGuard<'_>, tip: Oid) -> Result<Option<String>, StoreError> {
-    if wiki.good().is_some_and(|good| good.commit() == tip) {
-        return Ok(None);
-    }
-    Ok(match wiki.publish(guard, tip).await? {
-        PublishOutcome::Published(_) => None,
-        PublishOutcome::Refused(index) => {
-            let errors = ErrorList(index.errors()).to_string();
-            warn!("save: upstream tip {tip} refuses publish: {errors}");
-            Some(errors)
-        }
-    })
 }
 
 #[cfg(test)]
