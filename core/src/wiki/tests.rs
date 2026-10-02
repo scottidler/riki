@@ -200,3 +200,57 @@ async fn index_is_cached_by_commit() {
     let second = wiki.index(tip).await.expect("index");
     assert!(Arc::ptr_eq(&first, &second));
 }
+
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("log buffer").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogBuffer {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().expect("log buffer")).into_owned()
+    }
+}
+
+#[tokio::test]
+async fn an_order_entry_naming_nothing_warns_once_and_publish_goes_on() {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .with_ansi(false)
+        .finish();
+    let logging = tracing::subscriber::set_default(subscriber);
+    let fx = Fixture::new();
+    let tip = fx.push(&[
+        ("a.md", "# A\n"),
+        ("b.md", "# B\n"),
+        ("c/x.md", "# X\n"),
+        ("_order", "c\nb\ngone\n"),
+    ]);
+    let wiki = Wiki::open(&fx.config()).await.expect("open");
+    wiki.poll().await.expect("poll");
+    let good = wiki.good().expect("published");
+    assert_eq!(good.commit(), tip);
+    assert_eq!(good.nav.tree().order, ["c", "b"]);
+    let warns: Vec<String> = logs
+        .text()
+        .lines()
+        .filter(|line| line.contains("WARN") && line.contains("gone"))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(warns.len(), 1, "{}", logs.text());
+    assert!(warns[0].contains("_order"), "{warns:?}");
+    drop(logging);
+}

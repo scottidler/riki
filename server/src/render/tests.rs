@@ -514,3 +514,77 @@ fn labels_prefer_the_title_then_the_prettified_segment() {
     assert_eq!(label(&root.children["guide"], "guide"), "Guide");
     assert_eq!(label(&PageNode::default(), ""), "Home");
 }
+
+fn with_order(files: &[&str], orders: &[(&str, &str)]) -> NavIndex {
+    let (index, warnings) = NavIndex::build(Oid::ZERO_SHA1, files.iter().copied()).with_orders(
+        orders
+            .iter()
+            .map(|(file, text)| (file.to_string(), text.as_bytes().to_vec())),
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    index
+}
+
+fn reading_urls(index: &NavIndex) -> Vec<String> {
+    reading_order(index.tree())
+        .into_iter()
+        .map(|(node, _)| encode_path(&node.url))
+        .collect()
+}
+
+#[test]
+fn a_root_order_can_put_a_group_before_a_page_and_pager_follows_it() {
+    let files = ["a.md", "b.md", "c/x.md"];
+    let index = with_order(&files, &[("_order", "c\nb\n")]);
+    let html = sidebar(index.tree(), "");
+    assert_eq!(hrefs(&html), ["c/x", "b", "a"], "{html}");
+    let (group, b, a) = (
+        html.find("riki-nav-group").expect("group"),
+        html.find(r#"href="/b""#).expect("b"),
+        html.find(r#"href="/a""#).expect("a"),
+    );
+    assert!(group < b && b < a, "{html}");
+    assert_eq!(reading_urls(&index), ["c/x", "b", "a"]);
+    let from_b = pager(index.tree(), "b");
+    assert!(
+        from_b.contains(r#"riki-pager-prev" href="/c/x""#) && from_b.contains(r#"riki-pager-next" href="/a""#),
+        "{from_b}"
+    );
+    assert_eq!(
+        hrefs(&sidebar(index.tree(), "")),
+        reading_urls(&index),
+        "sidebar and reading order agree"
+    );
+}
+
+#[test]
+fn a_page_after_a_group_gets_its_own_list() {
+    let index = with_order(&["a.md", "c/x.md"], &[("_order", "c\n")]);
+    let html = sidebar(index.tree(), "");
+    assert_eq!(html.matches(r#"<ul class="riki-nav-list">"#).count(), 3, "{html}");
+    assert_eq!(html.matches("<ul").count(), html.matches("</ul>").count(), "{html}");
+}
+
+#[test]
+fn unlisted_entries_keep_todays_order_after_the_listed_ones() {
+    let files = ["a.md", "b.md", "d.md", "g/README.md", "g/x.md", "h/y.md"];
+    let index = with_order(&files, &[("_order", "d\n")]);
+    assert_eq!(reading_urls(&index), ["d", "a", "b", "g", "g/x", "h/y"]);
+    let plain = with_order(&files, &[]);
+    assert_eq!(reading_urls(&plain), ["a", "b", "d", "g", "g/x", "h/y"]);
+}
+
+#[test]
+fn a_group_order_reorders_pages_and_subfolders_together() {
+    let files = ["g/a.md", "g/b.md", "g/s/z.md"];
+    let plain = with_order(&files, &[]);
+    assert_eq!(reading_urls(&plain), ["g/a", "g/b", "g/s/z"]);
+    let index = with_order(&files, &[("g/_order", "s\nb\n")]);
+    assert_eq!(reading_urls(&index), ["g/s/z", "g/b", "g/a"]);
+}
+
+#[test]
+fn the_root_readme_stays_first_whatever_the_order_says() {
+    let index = with_order(&["README.md", "a.md", "b.md"], &[("_order", "b\na\n")]);
+    assert_eq!(reading_urls(&index), ["", "b", "a"]);
+}

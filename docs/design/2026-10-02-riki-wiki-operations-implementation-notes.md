@@ -73,3 +73,21 @@
 - Rename detection in `GitStore` vs. a `git2::Repository` inside `redirect.rs`: the store is the only module that opens the repo, and `redirect.rs` stays testable without git for `apply` and `resolve`.
 ### Open questions
 - None.
+
+## Phase 5: Sidebar order
+### Design decisions
+- `_order` is read in `Wiki::index` (the per-oid nav build), beside the titles: `index::order_files(paths)` picks the visible `_order` blobs, `read_blobs` fetches them, `NavIndex::with_orders` attaches them. The result is structure only (`PageNode.order: Vec<String>`), so the per-oid cache stays text-free: core/src/index.rs, core/src/wiki.rs:index.
+- `with_orders` keeps only entries that name a child of the folder (page stem or subfolder = the child's URL segment), once each, in file order. Unknown entries are dropped there, so the renderer never sees them. Blank lines, `#` lines, and surrounding whitespace are skipped: core/src/index.rs:with_orders.
+- Problems come back as data, `OrderWarning { UnknownEntry, NotUtf8, NoPages }`, and `Wiki::index` logs one WARN per warning. They are never `IndexError`s, so publish goes on. Because the index is cached per commit the WARN fires once per commit, not per request or poll.
+- `nav_items` / `group` share `listed_first(folder, rest)`: listed children first, then `rest` in today's order (root: pages then groups, each byte order; inside a group: all children interleaved in byte order). Without `_order` the iteration is exactly the old one: server/src/render.rs.
+- `sidebar()` walks `nav_items` once. A run of pages shares one `<ul>`; a group closes it and renders its `riki-nav-group` block; a page after a group opens a new `<ul>`. The first `<ul>` is always emitted and a trailing one only when open, so the no-`_order` HTML is byte-for-byte what main emitted.
+- The folder's `README.md` is the group itself; `README` as an `_order` entry names no child, so it warns like any unknown name. The root README is pushed first outside `_order`.
+- Tests: index units (parse, dedupe, unknown, nested folder, unusable files, `order_files`, `_order` never a page), render tests (root order puts folder `c` before `b` before `a` with the pager's Previous/Next agreeing, new `<ul>` after a group, unlisted keep today's order, group order interleaves pages and folders, root README first), and a wiki test that publishes `a.md b.md c/x.md _order=c,b,gone`, asserts publish succeeded and exactly one WARN naming `gone`.
+### Deviations
+- A fourth warning, `NoPages` (an `_order` in a folder with no children, or non-UTF-8 content), is added beyond the doc's "entry naming nothing". Same effect: skipped with a WARN, publish goes on.
+- The WARN capture needs a `tracing-subscriber` dev-dependency (fmt feature only) in `core`; the crate was already in the lockfile via the server.
+### Tradeoffs
+- Dropping unknown entries inside `NavIndex::with_orders` vs. leaving them in `PageNode.order` for the renderer to skip: the former keeps the renderer free of a case and the WARN next to the one place that knows the tree.
+- Warning in `Wiki::index` (cached, once per commit) vs. in `publish`: `index` also runs for step-7 candidate commits that never publish, so a bad `_order` on a candidate also warns; that is useful signal and does not repeat.
+### Open questions
+- None.

@@ -148,6 +148,7 @@ impl Wiki {
             return Ok(index.clone());
         }
         let paths = self.store.blob_paths(commit).await?;
+        let order_files = crate::index::order_files(&paths);
         let index = NavIndex::build(commit, paths);
         let files = index.pages().map(|(_, file)| file.to_string()).collect();
         let titles: HashMap<String, Option<String>> = self
@@ -160,7 +161,14 @@ impl Wiki {
                 (file, title)
             })
             .collect();
-        let index = Arc::new(index.with_titles(|file| titles.get(file).cloned().flatten()));
+        let orders = self.store.read_blobs(commit, order_files).await?;
+        let (index, warnings) = index
+            .with_titles(|file| titles.get(file).cloned().flatten())
+            .with_orders(orders);
+        for warning in &warnings {
+            warn!("index: {commit}: {warning}");
+        }
+        let index = Arc::new(index);
         self.indexes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

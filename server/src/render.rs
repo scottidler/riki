@@ -245,8 +245,10 @@ enum NavItem<'a> {
     },
 }
 
-/// The sidebar's entries: the home page (labelled `Home`) and top-level pages, then one group per
-/// top-level directory. Inside a group, pages and sub-groups follow in name order.
+/// The sidebar's entries: the home page (labelled `Home`), then the root's children. Without an
+/// `_order` file that is top-level pages in name order, then one group per top-level directory;
+/// the root's `_order` can put a group before a page. Inside a group, pages and sub-groups are
+/// interleaved in name order unless the group's own `_order` says otherwise.
 fn nav_items(root: &PageNode) -> Vec<NavItem<'_>> {
     let mut items = Vec::new();
     if root.file.is_some() {
@@ -255,32 +257,16 @@ fn nav_items(root: &PageNode) -> Vec<NavItem<'_>> {
             label: "Home".to_string(),
         });
     }
-    for (segment, child) in root.children.iter().filter(|(_, child)| child.children.is_empty()) {
-        items.push(NavItem::Page {
-            node: child,
-            label: label(child, segment),
-        });
-    }
-    for (segment, child) in root.children.iter().filter(|(_, child)| !child.children.is_empty()) {
-        items.push(group(segment, child));
-    }
+    let is_page = |child: &PageNode| child.children.is_empty();
+    let (pages, groups): (Vec<_>, Vec<_>) = root.children.iter().partition(|(_, child)| is_page(child));
+    let rest = pages.into_iter().chain(groups);
+    items.extend(listed_first(root, rest).map(|(segment, child)| nav_child(segment, child)));
     items
 }
 
 fn group<'a>(segment: &str, node: &'a PageNode) -> NavItem<'a> {
-    let items = node
-        .children
-        .iter()
-        .map(|(child_segment, child)| {
-            if child.children.is_empty() {
-                NavItem::Page {
-                    node: child,
-                    label: label(child, child_segment),
-                }
-            } else {
-                group(child_segment, child)
-            }
-        })
+    let items = listed_first(node, node.children.iter())
+        .map(|(child_segment, child)| nav_child(child_segment, child))
         .collect();
     NavItem::Group {
         node,
@@ -289,32 +275,67 @@ fn group<'a>(segment: &str, node: &'a PageNode) -> NavItem<'a> {
     }
 }
 
+fn nav_child<'a>(segment: &str, child: &'a PageNode) -> NavItem<'a> {
+    if child.children.is_empty() {
+        NavItem::Page {
+            node: child,
+            label: label(child, segment),
+        }
+    } else {
+        group(segment, child)
+    }
+}
+
+/// `folder`'s children with the `_order` entries first, in file order, then `rest` as given.
+fn listed_first<'a>(
+    folder: &'a PageNode,
+    rest: impl Iterator<Item = (&'a String, &'a PageNode)>,
+) -> impl Iterator<Item = (&'a String, &'a PageNode)> {
+    let listed = folder
+        .order
+        .iter()
+        .filter_map(|name| folder.children.get_key_value(name));
+    let rest = rest.filter(|(name, _)| !folder.order.contains(name));
+    listed.chain(rest)
+}
+
 /// The sidebar. Top-level directories are static group headers (a link when the directory has a
 /// `README.md`); nested directories collapse behind a chevron button (`aria-expanded`), open
 /// only along the path to the current page. `current` is the URL path being shown (no leading
 /// `/`).
 pub fn sidebar(root: &PageNode, current: &str) -> String {
-    let items = nav_items(root);
     let mut out = String::from(r#"<ul class="riki-nav-list">"#);
-    for item in items.iter().filter(|item| matches!(item, NavItem::Page { .. })) {
-        out.push_str(&nav_item(item, current));
-    }
-    out.push_str("</ul>");
-    for item in &items {
-        let NavItem::Group { node, label, items } = item else {
-            continue;
-        };
-        let head = match node.file {
-            Some(_) => link(node, label, current),
-            None => escape_html(label),
-        };
-        out.push_str(&format!(
-            r#"<div class="riki-nav-group"><p class="riki-nav-heading">{head}</p><ul class="riki-nav-list">"#
-        ));
-        for child in items {
-            out.push_str(&nav_item(child, current));
+    let mut list_open = true;
+    for item in &nav_items(root) {
+        match item {
+            NavItem::Page { .. } => {
+                if !list_open {
+                    out.push_str(r#"<ul class="riki-nav-list">"#);
+                    list_open = true;
+                }
+                out.push_str(&nav_item(item, current));
+            }
+            NavItem::Group { node, label, items } => {
+                if list_open {
+                    out.push_str("</ul>");
+                    list_open = false;
+                }
+                let head = match node.file {
+                    Some(_) => link(node, label, current),
+                    None => escape_html(label),
+                };
+                out.push_str(&format!(
+                    r#"<div class="riki-nav-group"><p class="riki-nav-heading">{head}</p><ul class="riki-nav-list">"#
+                ));
+                for child in items {
+                    out.push_str(&nav_item(child, current));
+                }
+                out.push_str("</ul></div>");
+            }
         }
-        out.push_str("</ul></div>");
+    }
+    if list_open {
+        out.push_str("</ul>");
     }
     out
 }

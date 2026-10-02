@@ -19,6 +19,9 @@ use crate::path::{self, PathError};
 pub const RESERVED: &[&str] = &["_riki", "health", "ready", "status", "deployed", "version"];
 
 const PAGE_SUFFIX: &str = ".md";
+/// The per-folder sidebar order file. Not a dot name (`path::validate` refuses those) and not
+/// `.md`, so it never enters the nav.
+pub const ORDER_FILE: &str = "_order";
 const DIR_PAGE: &str = "README";
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -42,6 +45,21 @@ pub struct PageNode {
     pub title: Option<String>,
     /// Children keyed by URL segment, so iteration is sorted.
     pub children: BTreeMap<String, PageNode>,
+    /// The folder's `_order` entries that name a child, in file order, each once. Empty without
+    /// an `_order` file. Unknown entries are dropped by [`NavIndex::with_orders`].
+    pub order: Vec<String>,
+}
+
+/// A problem with an `_order` file. Never an index error: the sidebar skips what it can't use
+/// and publish goes on.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum OrderWarning {
+    #[error("{file} names \"{entry}\", which is not a page or folder there")]
+    UnknownEntry { file: String, entry: String },
+    #[error("{file} is not valid UTF-8, so it is ignored")]
+    NotUtf8 { file: String },
+    #[error("{file} is in a folder with no pages, so it is ignored")]
+    NoPages { file: String },
 }
 
 /// The index for one commit. `errors` empty means the commit is publishable.
@@ -143,6 +161,46 @@ impl NavIndex {
         self
     }
 
+    /// Attach each folder's sidebar order. `orders` is `(file, bytes)` for every `_order` file
+    /// (see [`order_files`]); the folder is the file's directory. Returns what could not be used.
+    pub fn with_orders(mut self, orders: impl IntoIterator<Item = (String, Vec<u8>)>) -> (Self, Vec<OrderWarning>) {
+        let mut warnings = Vec::new();
+        for (file, bytes) in orders {
+            let folder = file.strip_suffix(ORDER_FILE).unwrap_or(&file).trim_end_matches('/');
+            let Ok(text) = String::from_utf8(bytes) else {
+                warnings.push(OrderWarning::NotUtf8 { file });
+                continue;
+            };
+            let Some(node) = self.node_mut(folder).filter(|node| !node.children.is_empty()) else {
+                warnings.push(OrderWarning::NoPages { file });
+                continue;
+            };
+            node.order.clear();
+            for entry in order_entries(&text) {
+                if !node.children.contains_key(entry) {
+                    warnings.push(OrderWarning::UnknownEntry {
+                        file: file.clone(),
+                        entry: entry.to_string(),
+                    });
+                } else if !node.order.iter().any(|seen| seen == entry) {
+                    node.order.push(entry.to_string());
+                }
+            }
+        }
+        (self, warnings)
+    }
+
+    fn node_mut(&mut self, url: &str) -> Option<&mut PageNode> {
+        let mut node = &mut self.tree;
+        if url.is_empty() {
+            return Some(node);
+        }
+        for segment in url.split('/') {
+            node = node.children.get_mut(segment)?;
+        }
+        Some(node)
+    }
+
     /// The node at `url` (no leading `/`; `""` is the root).
     pub fn node(&self, url: &str) -> Option<&PageNode> {
         let mut node = &self.tree;
@@ -154,6 +212,27 @@ impl NavIndex {
         }
         Some(node)
     }
+}
+
+/// The `_order` files among a commit's blob paths: not hidden, valid UTF-8, named `_order`.
+pub fn order_files<I, P>(blob_paths: I) -> Vec<String>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<[u8]>,
+{
+    blob_paths
+        .into_iter()
+        .filter(|raw| !is_hidden(raw.as_ref()))
+        .filter_map(|raw| std::str::from_utf8(raw.as_ref()).ok().map(str::to_string))
+        .filter(|file| file.rsplit('/').next() == Some(ORDER_FILE))
+        .collect()
+}
+
+/// One name per line; blank lines and `#` lines skipped.
+fn order_entries(text: &str) -> impl Iterator<Item = &str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
 }
 
 fn set_titles(node: &mut PageNode, title_of: &impl Fn(&str) -> Option<String>) {
@@ -278,6 +357,95 @@ mod tests {
         assert_eq!(index.node("c/x").map(|n| n.title.is_none()), Some(true));
         assert!(index.node("nope/deeper").is_none());
         assert_eq!(index.node("").map(|n| n.url.as_str()), Some(""));
+    }
+
+    fn ordered(files: &[&str], orders: &[(&str, &str)]) -> (NavIndex, Vec<OrderWarning>) {
+        NavIndex::build(oid(), files.iter().copied()).with_orders(
+            orders
+                .iter()
+                .map(|(file, text)| (file.to_string(), text.as_bytes().to_vec())),
+        )
+    }
+
+    #[test]
+    fn order_keeps_known_entries_in_file_order_once_and_skips_comments_and_blanks() {
+        let (index, warnings) = ordered(&["a.md", "b.md", "c/x.md"], &[("_order", "# first\n\n c \nb\nc\nb\n")]);
+        assert_eq!(index.tree().order, ["c", "b"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn order_entry_naming_nothing_is_a_warning_and_dropped() {
+        let (index, warnings) = ordered(&["a.md", "g/README.md", "g/x.md"], &[("_order", "gone\ng\nREADME\n")]);
+        assert_eq!(index.tree().order, ["g"]);
+        assert_eq!(
+            warnings,
+            [
+                OrderWarning::UnknownEntry {
+                    file: "_order".into(),
+                    entry: "gone".into()
+                },
+                OrderWarning::UnknownEntry {
+                    file: "_order".into(),
+                    entry: "README".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn order_in_a_nested_folder_attaches_to_that_folder() {
+        let (index, warnings) = ordered(&["g/a.md", "g/b.md"], &[("g/_order", "b\na\n")]);
+        assert_eq!(
+            index.node("g").map(|n| n.order.clone()),
+            Some(vec!["b".into(), "a".into()])
+        );
+        assert!(index.tree().order.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn unusable_order_files_warn_instead_of_failing() {
+        let index = NavIndex::build(oid(), ["a.md", "leaf/README.md"]);
+        let (index, warnings) = index.with_orders([
+            ("_order".to_string(), vec![0xff, 0xfe]),
+            ("leaf/_order".to_string(), b"x\n".to_vec()),
+            ("nowhere/_order".to_string(), b"x\n".to_vec()),
+        ]);
+        assert!(index.tree().order.is_empty());
+        assert_eq!(
+            warnings,
+            [
+                OrderWarning::NotUtf8 { file: "_order".into() },
+                OrderWarning::NoPages {
+                    file: "leaf/_order".into()
+                },
+                OrderWarning::NoPages {
+                    file: "nowhere/_order".into()
+                },
+            ]
+        );
+        assert!(index.is_publishable());
+    }
+
+    #[test]
+    fn order_files_finds_visible_order_files_only() {
+        let found = order_files([
+            "_order",
+            "a/_order",
+            "a/b.md",
+            ".git/_order",
+            "a/.x/_order",
+            "a/_order.md",
+        ]);
+        assert_eq!(found, ["_order", "a/_order"]);
+    }
+
+    #[test]
+    fn an_order_file_is_never_a_page() {
+        let index = NavIndex::build(oid(), ["_order", "a/_order"]);
+        assert!(index.is_publishable());
+        assert_eq!(index.pages().count(), 0);
     }
 
     #[test]
