@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { newPageBody, newPageBodyFromSearch } from '../src/newpage'
+import { editorViewCtx } from '@milkdown/kit/core'
+import { newPageBody, newPageBodyFromSearch, withoutNewParam } from '../src/newpage'
+import { withEditor } from './serialize'
 import {
   deletePage,
   fetchNewPage,
@@ -24,6 +26,22 @@ describe('new page body', () => {
   })
   it('collapses whitespace and escapes markdown punctuation', () => {
     expect(newPageBody('  A *b*\n c  ')).toBe('# A \\*b\\* c\n\n')
+  })
+  it('escapes # so a closing sequence stays in the title', async () => {
+    expect(newPageBody('C #')).toBe('# C \\#\n\n')
+    for (const title of ['C #', 'Guide ###', 'Issue #42', 'C# notes', '#hashtag', 'a *b* [c]']) {
+      const heading = await withEditor(newPageBody(title), (editor) => {
+        const first = editor.ctx.get(editorViewCtx).state.doc.firstChild!
+        return { type: first.type.name, level: first.attrs['level'], text: first.textContent }
+      })
+      expect(heading, title).toEqual({ type: 'heading', level: 1, text: title })
+    }
+  })
+  it('drops only ?new= from the URL after the first save, keeping other params and the hash', () => {
+    expect(withoutNewParam('http://h/notes/x?new=X')).toBe('/notes/x')
+    expect(withoutNewParam('http://h/x?view=print&new=X#sec')).toBe('/x?view=print#sec')
+    expect(withoutNewParam('http://h/guide?view=print#section')).toBeNull()
+    expect(withoutNewParam('http://h/guide')).toBeNull()
   })
   it('reads ?new= and ignores a missing or blank title', () => {
     expect(newPageBodyFromSearch('?new=Foo%20Bar')).toBe('# Foo Bar\n\n')

@@ -273,3 +273,24 @@
 - Rule on the quote's first paragraph only vs. any paragraph in a quote: GitHub only recognizes the marker on the first line.
 ### Open questions
 - None.
+
+## Implementation audit fixes
+### Design decisions
+- Turn into lifts first — `editor/src/selectiontoolbar.ts:liftOut` — wrap and setBlockType commands are no-ops (or nest) inside a list item or a quote. Turn into lifts the selection out of every list, quote and alert around it, innermost first, then applies the target. Lists use prosemirror-schema-list `liftListItem`, which also handles a range spanning several items. Quotes and alerts use `liftTarget`/`tr.lift` on the block range whose parent is that wrapper. The block handle and the slash menu reuse `TURN_INTO`, so all three get the fix.
+- A list target already in that list type does not split the list — `selectiontoolbar.ts:TURN_INTO` (bullet-list, ordered-list, task-list) — lifting item 2 of 3 and re-wrapping it would leave three adjacent lists. Bulleted inside a bullet list only clears task checkboxes; Numbered inside an ordered list does nothing; Task list inside a bullet list only adds the checkbox.
+- The command key is read at run time — `selectiontoolbar.ts:lifted` — Milkdown sets a `$command`'s `key` only when the editor loads the plugin, so an eager `.key` read at module load is `undefined`.
+- The ancestor-is-a-file check moved to `Fetched::file_ancestor` — `core/src/write.rs` — move (`move_page.rs:Move::blocked`) and restore (`delete.rs:Restore::check_and_build`) share one check. Restore answers it as `Check::Conflict` (409, the tip is published) before the upsert. `ancestors` and its unit test moved to `write.rs` with it.
+- JSON `url`s go through one helper — `server/src/api.rs:href` — `/` plus `riki_core::render::encode_path`, the function the sidebar uses. tree, new-page, search and `api/ops.rs:page_url` (move, restore) all call it.
+- The link box encodes each segment the way `encode_path` does — `editor/src/linkbox.ts:encodeSegment` — `encodeURIComponent` plus `!'()*`, so the bytes match the server's. The renderer keeps the encoding (`/docs/a%23b`), pinned by `core/src/render/tests.rs:an_encoded_link_keeps_its_encoding_so_it_reaches_the_page`.
+- Save drops only `new` — `editor/src/newpage.ts:withoutNewParam`, used by `main.ts:rerender` — returns path + remaining search + hash, or null when there is no `new` param, so a page without `?new=` keeps its URL untouched.
+- `newPageBody` escapes `#` — `editor/src/newpage.ts` — any `#` is escaped, not just a trailing run, because a backslash before ASCII punctuation is always a valid escape and the rule stays one character class.
+- Tests (each failed before its fix): core `delete::tests::restore_under_a_file_that_took_a_folder_name_is_a_conflict`; server `api::ops_tests::restore_under_a_file_that_took_a_folder_name_is_a_409`, `api::ops_tests::move_and_restore_urls_are_percent_encoded`, `api::tree_tests::tree_urls_are_percent_encoded_like_the_sidebar`, `api::tree_tests::new_page_url_is_percent_encoded`, `api::search_tests::hit_urls_are_percent_encoded_like_the_sidebar`; vitest `selectiontoolbar.test.ts` "Turn into lifts list items and quotes out before applying the target" (19 source/target cases), `blockhandle.test.ts` "Turn into from the menu retypes a list item and a quote, lifting it out", `linkbox.test.ts` "percent-encodes each segment like the sidebar..." and "choosing a page whose name has # writes an encoded relative link that round-trips", `page-actions.test.ts` "escapes # so a closing sequence stays in the title"; Playwright `e2e/editor.spec.ts` "saving keeps the query string and hash of the page URL". Plus the unit `page-actions.test.ts` "drops only ?new= from the URL...".
+- Canonical fixtures untouched (`git diff --stat a8021a8 -- editor/fixtures/canonical` empty). Bundles rebuilt and staged.
+### Deviations
+- The slash menu's first eight entries are `TURN_INTO`, so they now lift too: `/heading 2` typed in an empty list item gives a heading outside the list, and `/bulleted list` inside a quote gives a list outside it. Before, they nested (`- ## `, `> - `). Same effect as Turn into, by the design's "slash entries reuse the Turn into entries".
+- The link box now writes spaces as `%20` (`[x](two%20words.md)`) where Milkdown used to write `<two words.md>`. Both are valid CommonMark; the encoded form matches the sidebar's hrefs.
+### Tradeoffs
+- Lift then apply vs. converting the list node in place (Google Docs style, whole list changes type): lifting acts on the selected items only, which is what the ⋮⋮ handle targets, one block. In-place conversion would retype items the user did not pick.
+- A same-type no-op for list targets vs. lift, re-wrap, then join adjacent lists: the no-op is one check; the join would need care for ordered `start` and mixed task items.
+### Open questions
+- None. Audit Q1-Q3 answered in the design doc's Review Log; the two deferred items are parked rows in Non-Goals.

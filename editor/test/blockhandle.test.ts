@@ -110,6 +110,21 @@ describe('block handle', () => {
     expect(out).toBe('first\n\n## second line\n')
   })
 
+  it('Turn into from the menu retypes a list item and a quote, lifting it out', async () => {
+    const run = (md: string, index: number, id: string) =>
+      withEditor(md, async (editor, root) => {
+        await hover(editor, index)
+        click(root, 'block-handle')
+        click(root, 'block-turn-into')
+        click(root, `block-turn-${id}`)
+        return markdown(editor)
+      })
+    expect(await run('first\n\n- item\n', 1, 'ordered-list')).toBe('first\n\n1. item\n')
+    expect(await run('first\n\n- item\n', 1, 'text')).toBe('first\n\nitem\n')
+    expect(await run('first\n\n> item\n', 1, 'text')).toBe('first\n\nitem\n')
+    expect(await run('first\n\n> item\n', 1, 'bullet-list')).toBe('first\n\n- item\n')
+  })
+
   it('Turn into is off for a block with no text (divider, table)', async () => {
     await withEditor('one\n\n---\n\n| a |\n| --- |\n| 1 |\n', (editor) => {
       const { state } = viewOf(editor)

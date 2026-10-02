@@ -69,6 +69,37 @@ describe('selection toolbar', () => {
     expect(await run('turn-text', '# item\n')).toBe('item\n')
   })
 
+  it('Turn into lifts list items and quotes out before applying the target', async () => {
+    const run = (md: string, id: string) =>
+      withEditor(md, (editor, root) => {
+        select(editor, 'item')
+        click(root, id)
+        return markdown(editor)
+      })
+    const cases: Array<[string, string, string]> = [
+      ['- item\n', 'turn-ordered-list', '1. item\n'],
+      ['- item\n', 'turn-text', 'item\n'],
+      ['- item\n', 'turn-h2', '## item\n'],
+      ['- item\n', 'turn-quote', '> item\n'],
+      ['- item\n', 'turn-task-list', '- [ ] item\n'],
+      ['- item\n', 'turn-bullet-list', '- item\n'],
+      ['1. item\n', 'turn-bullet-list', '- item\n'],
+      ['1. item\n', 'turn-task-list', '- [ ] item\n'],
+      ['1. item\n', 'turn-ordered-list', '1. item\n'],
+      ['- [ ] item\n', 'turn-bullet-list', '- item\n'],
+      ['- [ ] item\n', 'turn-text', 'item\n'],
+      ['> item\n', 'turn-text', 'item\n'],
+      ['> item\n', 'turn-bullet-list', '- item\n'],
+      ['> item\n', 'turn-h1', '# item\n'],
+      ['> item\n', 'turn-quote', '> item\n'],
+      ['> - item\n', 'turn-text', 'item\n'],
+      ['- a\n- item\n- c\n', 'turn-h2', '- a\n\n## item\n\n- c\n'],
+      ['- a\n- item\n- c\n', 'turn-bullet-list', '- a\n- item\n- c\n'],
+      ['> [!NOTE]\n> item\n', 'turn-text', 'item\n'],
+    ]
+    for (const [md, id, want] of cases) expect(await run(md, id), `${JSON.stringify(md)} ${id}`).toBe(want)
+  })
+
   it('bold, italic, strike, and code wrap the selection', async () => {
     const run = (id: string) =>
       withEditor('say word now\n', (editor, root) => {

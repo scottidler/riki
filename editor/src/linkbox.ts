@@ -18,13 +18,20 @@ type Fetch = typeof fetch
 /** Most rows the box shows for a query. */
 const MAX_ROWS = 20
 
-/** `target` (a repo path) as a link written in `sourceFile`: `../c/d.md` from `a/b.md` to `c/d.md`. */
+/** One path segment percent-encoded the way the server's `encode_path` does (and so the
+ *  sidebar's hrefs): every byte but unreserved characters, so `#` and `?` stay in the path. */
+function encodeSegment(segment: string): string {
+  return encodeURIComponent(segment).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+}
+
+/** `target` (a repo path) as a link written in `sourceFile`: `../c/d.md` from `a/b.md` to `c/d.md`.
+ *  Each segment is percent-encoded, so `docs/a#b.md` links as `docs/a%23b.md`. */
 export function relativeHref(sourceFile: string, target: string): string {
   const from = sourceFile.split('/').slice(0, -1)
   const to = target.split('/')
   let shared = 0
   while (shared < from.length && shared < to.length - 1 && from[shared] === to[shared]) shared++
-  return [...from.slice(shared).map(() => '..'), ...to.slice(shared)].join('/')
+  return [...from.slice(shared).map(() => '..'), ...to.slice(shared).map(encodeSegment)].join('/')
 }
 
 /** True for input that is a URL with a scheme (`https://x`, `mailto:a@b`): inserted as typed. */

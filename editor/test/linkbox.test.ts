@@ -86,6 +86,13 @@ describe('relativeHref', () => {
     expect(relativeHref('a/b/c.md', 'a/x/y.md')).toBe('../x/y.md')
     expect(relativeHref('a/b/c.md', 'x.md')).toBe('../../x.md')
   })
+  it('percent-encodes each segment like the sidebar, so # ? and spaces stay in the path', () => {
+    expect(relativeHref('README.md', 'docs/a#b.md')).toBe('docs/a%23b.md')
+    expect(relativeHref('a/b.md', 'c/why?.md')).toBe('../c/why%3F.md')
+    expect(relativeHref('a/b.md', 'a/two words.md')).toBe('two%20words.md')
+    expect(relativeHref('a/b.md', 'a/caf\u00e9 (1).md')).toBe('caf%C3%A9%20%281%29.md')
+    expect(relativeHref('x y/b.md', 'x y/c.md')).toBe('c.md')
+  })
   it('links a file to itself by name', () => {
     expect(relativeHref('a/b.md', 'a/b.md')).toBe('b.md')
   })
@@ -129,6 +136,31 @@ describe('link box', () => {
       'a/b.md',
     )
     expect(out).toBe('see [here](../c/d.md) now\n')
+    vi.useRealTimers()
+    expect(await roundTrip(out)).toBe(out)
+  })
+
+  it('choosing a page whose name has # writes an encoded relative link that round-trips', async () => {
+    vi.useFakeTimers()
+    const hashTree = { folders: ['', 'docs'], pages: [{ path: 'docs/a#b.md', url: '/docs/a%23b', title: 'Hash page' }] }
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const body = String(input).startsWith('/_riki/api/tree') ? hashTree : { hits: [] }
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+    const out = await withEditor(
+      'see here now\n',
+      async (editor) => {
+        select(editor, 'here', true)
+        openBox(editor, 'README.md', fetchImpl)
+        await flush()
+        type('hash')
+        await settle()
+        key('Enter')
+        return editor.action(getMarkdown())
+      },
+      'README.md',
+    )
+    expect(out).toBe('see [here](docs/a%23b.md) now\n')
     vi.useRealTimers()
     expect(await roundTrip(out)).toBe(out)
   })

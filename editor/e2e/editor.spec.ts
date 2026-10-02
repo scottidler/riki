@@ -48,6 +48,19 @@ test('a canonical page passes the guard and becomes editable in place', async ({
   expect(page.url()).toBe(`${riki.url}/guide`)
 })
 
+test('saving keeps the query string and hash of the page URL', async ({ page, riki }) => {
+  await page.goto(`${riki.url}/guide?view=print#section`)
+  await page.locator('#riki-edit').click()
+  await expect(editor(page)).toHaveAttribute('contenteditable', 'true')
+  await editor(page).getByText('A canonical page.').click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' More.')
+  await control(page, 'save').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('guide.md')).toContain('A canonical page. More.')
+  expect(page.url()).toBe(`${riki.url}/guide?view=print#section`)
+})
+
 test('a table, a WARNING alert, and a link from toolbar clicks and plain typing are saved as GFM', async ({ page, riki }) => {
   await page.goto(`${riki.url}/notes/toolbar`)
   await page.getByText('Create this page').click()

@@ -56,6 +56,8 @@ Parked, with revisit condition:
 | Drag-to-reorder in the sidebar | edit `_order` via git | Scott asks |
 | Search ranking beyond title > heading > body | that order | ranking is a complaint |
 | Mintlify's media, layout, API, Mermaid, math slash items | GFM blocks only | the block vocabulary grows |
+| Search palette stale result: the ticket advances only when the debounced search fires (`editor/src/page/search.ts`), so an older in-flight response can render during the 150 ms window | accepted cost: Enter in that window can open the older query's hit (typed "new", navigated to "/old"); the fix is bumping the ticket on input | a wrong-page navigation from the palette is reported |
+| Pasted HTML table writes `\| :--- \|` (same as v0.1.1; paste is not a `createAndFill` path) | accepted cost: a pasted table saves a non-canonical `:---` delimiter the round-trip guard cannot see | a pasted table shows up in a diff |
 
 ## Proposed Solution
 
@@ -411,6 +413,12 @@ Criteria 2-4 write commits, so they run against a test riki pointed at `scottidl
   - Redirect map built inside `publish`, the startup full walk awaited in `Wiki::open`'s first publish; `publish` is the only writer of `good`
   - Move timeout/retry test moved from Phase 3 to Phase 4; Phase 4 asserts the `?new=` 404 page, the editor prefill assert moved to Phase 7
   - Phase 5 fallback order stated: root pages then groups at the root, byte-order interleave inside groups; unchanged without `_order`
+
+- **Panel implementation audit** (synthesis `/tmp/review-panel/pyquHtCj/synthesis.md`, probes `/tmp/review-panel/pyquHtCj/probes.md`; Mode 2 against `2de254d`): 2 must-fix and 3 cheap-win folded in, 2 deferred. The staff seat timed out (rc=124 on both attempts) and wrote no review; its findings came from its preserved traces, each re-run by the panel before inclusion
+  - Must-fix: Turn into lifts list items and quotes out before applying the target (selection toolbar and the ⋮⋮ menu share `TURN_INTO`); restore under a file that took a folder name is a 409 (the move ancestor check, shared), not a git2 D/F 500
+  - Cheap-win: tree, new-page, search, move and restore `url`s percent-encoded like the sidebar, and the link box writes encoded relative links; Save drops only `?new=`, keeping other params and the hash; the new-page H1 escapes `#` so a trailing ` #` stays in the title
+  - Deferred (parked rows in Non-Goals): search palette stale result; pasted HTML table `:---`
+  - Open questions answered: Q1 the empty alert keeps `> <br />` (Milkdown's universal empty-paragraph form; the marker line meets Phase 13); Q2 no "Add row after", the boundary `+` already meets row add; Q3 paste stays parked
 
 ## References
 

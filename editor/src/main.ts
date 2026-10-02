@@ -3,7 +3,7 @@
 
 import { Session } from './session'
 import type { PageTarget } from './session'
-import { newPageBodyFromSearch } from './newpage'
+import { newPageBodyFromSearch, withoutNewParam } from './newpage'
 
 /** The pieces of a rendered riki page the editor replaces after a save. */
 const SWAPPED = ['header .actions', '.riki-trail', '.riki-sidebar', 'main']
@@ -36,7 +36,8 @@ async function rerender(): Promise<void> {
     if (current && next) current.replaceWith(document.adoptNode(next))
   }
   // A created page now exists: drop `?new=` so a reload is an ordinary view of it.
-  if (window.location.search) window.history.replaceState(null, '', window.location.pathname)
+  const kept = withoutNewParam(window.location.href)
+  if (kept !== null) window.history.replaceState(null, '', kept)
   for (const banner of document.querySelectorAll('.banner')) banner.remove()
   const header = document.querySelector('header')
   for (const banner of [...fresh.querySelectorAll('.banner')].reverse()) header?.after(document.adoptNode(banner))
