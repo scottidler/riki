@@ -8,6 +8,11 @@ tasks:
   lint:
     help: "Run whitespace and convention linting"
     bash: |
+      # rust-ci.yml@v1 installs otto but not whitespace (exit 127 on the runner)
+      if ! command -v whitespace >/dev/null; then
+        echo "=== whitespace not on PATH; installing scottidler/whitespace v0.1.2 ==="
+        cargo install --locked --git https://github.com/scottidler/whitespace --tag v0.1.2
+      fi
       whitespace -r
       echo ""
       echo "=== Deny _variable binding pattern ==="
