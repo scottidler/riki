@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 use tracing::debug;
 
 use crate::config::{CommitterConfig, GitConfig, IdentityConfig};
-use crate::{api, pages};
+use crate::{api, assets, pages};
 
 /// Compile-time git facts from this crate's `build.rs` (`env!` must resolve in the crate whose
 /// build script sets it, never in core).
@@ -34,6 +34,8 @@ pub struct AppState {
     pub(crate) wiki: Arc<Wiki>,
     pub(crate) identity: Arc<IdentityConfig>,
     pub(crate) save: Arc<SaveSettings>,
+    /// GitHub blob URL prefix for content files, when the remote is on GitHub.
+    pub(crate) github_blob_base: Option<Arc<str>>,
 }
 
 impl AppState {
@@ -43,7 +45,14 @@ impl AppState {
             wiki,
             identity: Arc::new(IdentityConfig::default()),
             save: Arc::new(save_settings(&CommitterConfig::default(), &GitConfig::default())),
+            github_blob_base: None,
         }
+    }
+
+    /// Link content files on GitHub under this prefix (`Config::github_blob_base`).
+    pub fn with_github_blob_base(mut self, base: Option<String>) -> Self {
+        self.github_blob_base = base.map(Arc::from);
+        self
     }
 
     /// Use the configured identity headers instead of the defaults.
@@ -80,6 +89,7 @@ pub fn router(state: AppState) -> Router {
         .route("/deployed", get(deployed))
         .route("/version", get(version))
         .route("/_riki/raw/{*path}", get(pages::raw))
+        .route("/_riki/assets/{name}", get(assets::asset))
         .merge(api::router())
         .route("/", get(pages::root))
         .route("/{*path}", get(pages::page))

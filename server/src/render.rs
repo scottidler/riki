@@ -9,17 +9,15 @@ use tracing::debug;
 const PAGE_TEMPLATE: &str = include_str!("../templates/page.html");
 const ERROR_TEMPLATE: &str = include_str!("../templates/error.html");
 
-/// CSP for rendered pages: same-origin script (the editor bundle, Phase 6), inline style from the
-/// template, images from this origin, `https:` or `data:`. Nothing else loads.
+/// CSP for rendered pages: same-origin script (the editor bundle at `/_riki/assets/`), same-origin
+/// stylesheets plus the template's inline style, images from this origin, `https:` or `data:`.
+/// Nothing else loads.
 pub const CSP_PAGE: &str = "default-src 'none'; script-src 'self'; connect-src 'self'; \
-img-src 'self' https: data:; style-src 'unsafe-inline'; frame-ancestors 'self'";
+img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'";
 
 /// CSP for `/_riki/raw/` responses: marquee's `CSP_ASSET`. An SVG served from here cannot run
 /// script against the save API.
 pub const CSP_ASSET: &str = "default-src 'none'; frame-ancestors 'self'";
-
-/// The Edit button. Phase 6 wires it; until then it is disabled.
-const EDIT_BUTTON: &str = r#"<button id="riki-edit" type="button" disabled>Edit</button>"#;
 
 /// Single-pass `__TOKEN__` substitution: a value placed for one token is never re-scanned, so
 /// page content containing a literal `__BODY__` cannot smuggle itself into a later token. Tokens
@@ -53,20 +51,26 @@ pub fn fill(template: &str, vars: &[(&str, &str)]) -> String {
 /// What the Edit slot of a page shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action<'a> {
-    Edit,
+    /// An existing page: the Edit button for the file at this repo path, with the file's page on
+    /// GitHub when the content remote is a GitHub repo (the editor links it when it refuses).
+    Edit { file: &'a str, source: Option<&'a str> },
     /// Nothing to act on: a path riki's own routes own.
     None,
-    /// A missing page: offer to create the file at this repo path (Phase 6 wires it).
-    Create {
-        file: &'a str,
-    },
+    /// A missing page: offer to create the file at this repo path.
+    Create { file: &'a str },
 }
 
 /// A full page: sidebar, banners, and the rendered body (already safe HTML).
 pub fn page(title: &str, body_html: &str, sidebar_html: &str, banners_html: &str, action: Action<'_>) -> String {
     debug!("render::page: title={title:?} action={action:?}");
     let action_html = match action {
-        Action::Edit => EDIT_BUTTON.to_string(),
+        Action::Edit { file, source } => {
+            let source = source.map_or_else(String::new, |url| format!(r#" data-source="{}""#, escape_html(url)));
+            format!(
+                r#"<button id="riki-edit" type="button" data-path="{}"{source}>Edit</button>"#,
+                escape_html(file)
+            )
+        }
         Action::None => String::new(),
         Action::Create { file } => format!(
             r##"<a id="riki-create" href="#" data-path="{}">Create this page</a>"##,

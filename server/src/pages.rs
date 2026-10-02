@@ -94,9 +94,17 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
         }
     };
     let body = render_markdown(file, &String::from_utf8_lossy(&source));
+    let source_url = state
+        .github_blob_base
+        .as_deref()
+        .map(|base| format!("{base}{}", encode_path(file)));
+    let action = Action::Edit {
+        file,
+        source: source_url.as_deref(),
+    };
     html_response(
         StatusCode::OK,
-        render::page(&title(path), &body, &sidebar, &banners, Action::Edit),
+        render::page(&title(path), &body, &sidebar, &banners, action),
     )
 }
 

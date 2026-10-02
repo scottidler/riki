@@ -116,3 +116,47 @@ fn header_mode_accepts_loopback_v4_and_v6() {
         Config::from_yaml(&yaml, Some(home())).unwrap_or_else(|e| panic!("{listen}: {e:#}"));
     }
 }
+
+#[test]
+fn github_remotes_map_to_blob_urls() {
+    for remote in [
+        "git@github.com:scottidler/wiki.git",
+        "git@github.com:scottidler/wiki",
+        "ssh://git@github.com/scottidler/wiki.git",
+        "https://github.com/scottidler/wiki.git",
+        "https://github.com/scottidler/wiki",
+    ] {
+        assert_eq!(
+            github_blob_base(remote, "main").as_deref(),
+            Some("https://github.com/scottidler/wiki/blob/main/"),
+            "{remote}"
+        );
+    }
+}
+
+#[test]
+fn non_github_remotes_have_no_blob_url() {
+    for remote in [
+        "file:///tmp/upstream.git",
+        "git@gitlab.com:o/r.git",
+        "https://github.com/o",
+        "https://github.com/o/r/extra",
+        "https://github.com//r",
+        "git@github.com:o/../r.git",
+    ] {
+        assert_eq!(github_blob_base(remote, "main"), None, "{remote}");
+    }
+}
+
+#[test]
+fn the_blob_url_comes_from_the_configured_remote_and_branch() {
+    let config = Config::from_yaml(
+        "content:\n  remote: git@github.com:o/r.git\n  branch: wiki\n  cache-dir: /c\n",
+        Some(home()),
+    )
+    .expect("config");
+    assert_eq!(
+        config.github_blob_base().as_deref(),
+        Some("https://github.com/o/r/blob/wiki/")
+    );
+}

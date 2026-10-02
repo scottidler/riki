@@ -72,9 +72,39 @@ tasks:
       fi
       echo "=== riki-core is still axum-free (OK) ==="
 
+  editor:
+    help: "Typecheck, test, and rebuild the editor bundle; fail if the committed server/assets/ bundle is stale"
+    bash: |
+      for tool in node pnpm; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+          echo "ERROR: $tool is not installed. The editor task needs node and pnpm to rebuild" >&2
+          echo "server/assets/editor.js from editor/ (see editor/package.json)." >&2
+          exit 1
+        fi
+      done
+      cd editor
+      pnpm install --frozen-lockfile --prefer-offline
+      pnpm run typecheck
+      pnpm run test
+      pnpm run build
+      cd ..
+      if ! git diff --exit-code -- server/assets/editor.js server/assets/editor.css; then
+        echo "" >&2
+        echo "ERROR: server/assets/ differs from a fresh build of editor/. Commit the rebuilt bundle." >&2
+        exit 1
+      fi
+      echo "=== Editor bundle matches a fresh build ==="
+
+  e2e:
+    help: "Playwright against the real riki binary (needs chromium: cd editor && pnpm exec playwright install chromium)"
+    bash: |
+      cargo build -p riki-server
+      cd editor
+      pnpm run e2e
+
   ci:
-    help: "Full CI pipeline (lint + bloat + check + test + core-guard in parallel)"
-    before: [lint, bloat, check, test, core-guard]
+    help: "Full CI pipeline (lint + bloat + check + test + core-guard + editor in parallel)"
+    before: [lint, bloat, check, test, core-guard, editor]
     bash: |
       echo "=== All CI checks passed! ==="
 

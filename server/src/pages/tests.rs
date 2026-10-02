@@ -40,7 +40,11 @@ impl Reply {
 }
 
 async fn get(wiki: &Arc<Wiki>, path: &str) -> Reply {
-    let app = router(AppState::new(Arc::new(Runtime::new()), wiki.clone()));
+    send(AppState::new(Arc::new(Runtime::new()), wiki.clone()), path).await
+}
+
+async fn send(state: AppState, path: &str) -> Reply {
+    let app = router(state);
     let response = app
         .oneshot(Request::get(path).body(Body::empty()).expect("request"))
         .await
@@ -102,6 +106,36 @@ async fn pages_show_the_sidebar_and_an_edit_button() {
     let html = get(&fx.wiki, "/a/b").await.text();
     assert!(html.contains(r#"<a href="/a/b" class="current">b</a>"#), "{html}");
     assert!(html.contains("id=\"riki-edit\""), "{html}");
+}
+
+#[tokio::test]
+async fn the_edit_button_names_the_served_file() {
+    let fx = wiki_with(&[("README.md", "# home\n"), ("a/b/README.md", "b\n")]).await;
+    let html = get(&fx.wiki, "/a/b").await.text();
+    assert!(
+        html.contains(r#"<button id="riki-edit" type="button" data-path="a/b/README.md">Edit</button>"#),
+        "{html}"
+    );
+}
+
+#[tokio::test]
+async fn the_edit_button_links_the_file_on_github_when_configured() {
+    let fx = wiki_with(&[("README.md", "# home\n"), ("a b.md", "x\n")]).await;
+    let state = AppState::new(Arc::new(Runtime::new()), fx.wiki.clone())
+        .with_github_blob_base(Some("https://github.com/o/r/blob/main/".to_string()));
+    let html = send(state, "/a%20b").await.text();
+    assert!(
+        html.contains(r#"data-source="https://github.com/o/r/blob/main/a%20b.md""#),
+        "{html}"
+    );
+}
+
+#[tokio::test]
+async fn the_editor_assets_are_served_alongside_pages() {
+    let fx = wiki_with(&[("README.md", "# home\n")]).await;
+    let reply = get(&fx.wiki, "/_riki/assets/editor.js").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.header(header::CONTENT_TYPE), "text/javascript; charset=utf-8");
 }
 
 #[tokio::test]

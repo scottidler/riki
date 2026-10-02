@@ -144,6 +144,12 @@ impl Config {
         }
     }
 
+    /// Where a file of the content repo lives on GitHub (`https://github.com/<owner>/<repo>/blob/
+    /// <branch>/`, append the path), when `content.remote` is a GitHub repo; `None` otherwise.
+    pub fn github_blob_base(&self) -> Option<String> {
+        github_blob_base(&self.content.remote, &self.content.branch)
+    }
+
     /// Load the config at `path`, or at the XDG default when `path` is `None`. A missing or
     /// invalid file is an error: riki never starts on guessed settings.
     pub fn load(path: Option<&Path>) -> Result<Self> {
@@ -177,6 +183,30 @@ impl Config {
             IdentityMode::Header => Ok(()),
         }
     }
+}
+
+/// The GitHub blob URL prefix for `remote` at `branch`. Accepts the three remote forms GitHub
+/// hands out: `git@github.com:o/r.git`, `ssh://git@github.com/o/r.git`, `https://github.com/o/r`
+/// (each with or without `.git`). Anything else (another host, a `file://` test upstream) is
+/// `None`: riki links nothing rather than guess.
+pub fn github_blob_base(remote: &str, branch: &str) -> Option<String> {
+    let path = ["git@github.com:", "ssh://git@github.com/", "https://github.com/"]
+        .iter()
+        .find_map(|prefix| remote.strip_prefix(prefix))?;
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    let valid = |segment: &str| {
+        !segment.is_empty()
+            && !segment.starts_with('.')
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    if !valid(owner) || !valid(repo) {
+        return None;
+    }
+    let branch = riki_core::render::encode_path(branch);
+    Some(format!("https://github.com/{owner}/{repo}/blob/{branch}/"))
 }
 
 /// `$XDG_CONFIG_HOME/riki/riki.yml`, else `~/.config/riki/riki.yml`.

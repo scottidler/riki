@@ -1,6 +1,7 @@
 //! riki's HTTP shell: config, routes, and process wiring over `riki-core`.
 
 pub mod api;
+pub mod assets;
 pub mod cli;
 pub mod config;
 pub mod identity;
@@ -41,9 +42,11 @@ pub async fn run(config: Config) -> Result<()> {
     poller::poll_once(&wiki).await;
     let poller = poller::spawn(wiki.clone(), config.git.poll_interval);
     let save = routes::save_settings(&config.committer, &config.git);
+    let github_blob_base = config.github_blob_base();
     let state = routes::AppState::new(runtime.clone(), wiki)
         .with_identity(config.identity)
-        .with_save(save);
+        .with_save(save)
+        .with_github_blob_base(github_blob_base);
     let app = routes::router(state);
     runtime.mark_ready();
     info!("riki listening on {}", listener.local_addr()?);
