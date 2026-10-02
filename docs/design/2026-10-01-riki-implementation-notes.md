@@ -316,3 +316,39 @@
 - Should `otto e2e` join `otto ci`? That would mean a Chromium install on every machine that runs CI.
 - Not a repo issue, recorded so the next phase doesn't re-derive it: in the agent's Bash tool, `./node_modules/.bin/playwright test` failed with `unknown command '<cwd>/test'`. The tool rewrites any bare argument that names an existing relative path into an absolute path (`echo src e2e nonexistent` prints the first two as absolute paths), so `test` matched `editor/test/`. `pnpm run e2e` and `sh -c '...'` are unaffected. A normal shell never sees it.
 - Phase 5 open question: `editable: false` sends `body: null`. The editor treats null and `editable: false` the same way (notice plus GitHub link), so either shape works.
+
+## Implementation audit round 1 fixes
+
+Source: the review-panel synthesis at `/tmp/review-panel/JYGHyoQC/synthesis.md` (must-fix 1, cheap-wins 2-4, caller questions Q1 and Q2). Every fix has a test that was run against the unfixed code and failed:
+
+| # | Fix | Test | Failure without the fix |
+| --- | --- | --- | --- |
+| 1 | A tip that refuses publish no longer returns 200 on the content-present and unchanged paths | `save::tests::unchanged_on_a_tip_that_refuses_publish_is_an_index_conflict_not_a_200`, `save::tests::content_present_on_a_tip_that_refuses_publish_is_an_index_conflict_not_a_200` | `expected IndexConflict, got Unchanged` / `got ContentPresent` |
+| 2 | A missing homepage offers "Create this page" for `README.md` | `pages::tests::a_missing_homepage_is_404_with_create_readme` | no "Create this page" in the 404 |
+| 3 | A save's fetch updates upstream health | `save::tests::a_save_observed_outage_and_recovery_update_upstream_health` | `a save's failed fetch marks upstream unreachable` |
+| 4 | Relative images display in edit mode | `test/images.test.ts` "shows the resolved URL in edit mode and serializes the author src unchanged" | `Expected "/_riki/raw/a/b/img.png", Received "img.png"` |
+| 5 | GitHub's lost-CAS wording retries | `store::tests::classify_push_retries_a_lost_server_side_ref_update` (plus `classify_push_fails_hook_atomic_and_generic_remote_rejections`, which pins what stays 502) | `Err(Failed { ... [remote rejected] (cannot lock ref 'refs/heads/main': is at ... but expected ...) })` |
+| 6 | `otto editor` runs on a runner with node but no pnpm | Run by hand: `otto editor` with pnpm off PATH and node + corepack on it printed `=== pnpm not on PATH; using corepack pnpm@10.29.3 ===`, then passed (145 vitest tests, bundle matches). With node off PATH it exits 1 with `ERROR: node is not installed.` | the old task exited 1 with `ERROR: pnpm is not installed.` |
+
+`otto e2e` passed (7 of 7) after the fixes. It stays out of `otto ci`, per Scott.
+
+### Design decisions
+- Refused publish maps to `IndexConflict` (409 naming the index errors) - `core/src/save.rs:publish_tip` now returns `Option<String>` with the errors. The doc says a 200 means the next GET renders the page as saved, and when the good tip did not move that is false.
+- The page-moved `Conflict` path keeps returning `Conflict` even when the tip refuses publish - `core/src/save.rs:save`. It is already a 409, and its `current-body` is what the author needs to reconcile. The refusal still shows in the banner and `/status`, because `Wiki::publish` records it.
+- One fetch with health bookkeeping, `Wiki::fetch` - `core/src/wiki.rs`. Both `Wiki::poll` and step 3 of the save call it, so a fetch failure or recovery seen by either one updates `health.unreachable` the same way (the first failure's `since` is kept). The log prefix changed from `poll: fetch failed` to `fetch: failed`.
+- `MOVED_REASONS` entries are fragment lists that must all match - `core/src/store.rs:is_moved`. `cannot lock ref` needs `': is at ` and ` but expected ` as well, so `cannot lock ref '...': reference already exists` stays a 502. `(failed to update ref)` keeps its closing parenthesis so the atomic-push `(failed to update refs)` does not match.
+- Edit-mode images use a ProseMirror node view, not a document transform - `editor/src/images.ts:imageView`. The node's `src` attr stays the author's text, so `getMarkdown()` is unchanged and all fixtures stay byte-identical. Only the displayed `<img>` points at `/_riki/raw/<resolved>`. `rawImageUrl`/`resolve` mirror `core/src/render.rs` `relative`/`resolve`/`rewrite_image` rule for rule. The clipboard path uses the schema's `toDOM`, so copied images keep the raw `src` too.
+- `EditorSetup.sourceFile` is required - `editor/src/setup.ts`. The session passes the page path. The test harness defaults to `README.md`.
+- The `editor` task resolves pnpm in order: `pnpm` on PATH, then `corepack <packageManager>`, with the version read from `editor/package.json` (already `pnpm@10.29.3`; `pnpm-lock.yaml` is lockfileVersion 9.0, the pnpm 10 format). If neither is present, or `packageManager` does not pin pnpm, it exits 1 naming the cause. `COREPACK_ENABLE_DOWNLOAD_PROMPT=0` stops corepack from prompting on a headless runner.
+
+### Deviations
+- None.
+
+### Tradeoffs
+- Corepack fallback vs adding a node/pnpm setup step to the shared `scottidler/github-actions` workflow: corepack keeps the fix in this repo (the shared workflow is off limits). The cost is that corepack downloads pnpm from registry.npmjs.org on first use, and corepack is not bundled with Node 25+. A runner on Node 25+ without pnpm fails loudly with "neither pnpm nor corepack is installed".
+- Node view vs rewriting `src` on parse and back on serialize: a round-trip rewrite would risk exactly the byte drift the guard exists to catch. The node view never touches the document.
+
+### Open questions
+- Item 5 is matched against git's own strings plus the public GitHub logs codex cited. No live concurrent push against GitHub has been run, so whether GitHub emits one of these two reasons on today's servers is still unverified until there is a race test against a real GitHub repo.
+- GitHub CI is still unrun (riki-poc is local only). The reusable workflow does not install node either. ubuntu-latest ships a system node, but its version against `engines.node >=24` (advisory, not enforced) has not been checked on a runner.
+- Seen once during this round, not part of it: `server/src/tests.rs::non_default_listen_is_what_gets_bound` failed with `Address already in use (os error 98)`, then passed on rerun. The test binds port 0, drops the probe, then binds that port again. In that window the sibling test `bind_fails_loudly_when_the_port_is_taken` runs in parallel and also binds port 0, and the kernel can hand it the port that was just freed. Fixing it means holding the listener instead of re-binding (for example, passing a pre-bound `TcpListener` into `bind`). Left alone because it is outside this audit's scope.

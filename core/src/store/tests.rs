@@ -237,6 +237,47 @@ fn classify_push_fails_transport_and_other_rejections_with_stderr() {
     }
 }
 
+#[test]
+fn classify_push_retries_a_lost_server_side_ref_update() {
+    for reason in [
+        "(cannot lock ref 'refs/heads/main': is at 1111111111111111111111111111111111111111 but expected 2222222222222222222222222222222222222222)",
+        "(failed to update ref)",
+    ] {
+        let lost = output(
+            1,
+            &format!("To github.com:x/y.git\n!\te1b0:refs/heads/main\t[remote rejected] {reason}\nDone\n"),
+            "error: failed to push some refs",
+        );
+        assert!(
+            matches!(classify_push(&lost), Ok(PushOutcome::NonFastForward { ref line }) if line.contains(reason)),
+            "{reason}: {:?}",
+            classify_push(&lost)
+        );
+    }
+}
+
+#[test]
+fn classify_push_fails_hook_atomic_and_generic_remote_rejections() {
+    for reason in [
+        "(pre-receive hook declined)",
+        "(protected branch hook declined)",
+        "(atomic push failure)",
+        "(failed to update refs)",
+        "(cannot lock ref 'refs/heads/main': reference already exists)",
+        "(some new server reason)",
+    ] {
+        let rejected = output(
+            1,
+            &format!("!\tabc:refs/heads/main\t[remote rejected] {reason}\nDone\n"),
+            "error: failed to push some refs",
+        );
+        match classify_push(&rejected) {
+            Err(StoreError::Failed { stderr, .. }) => assert!(stderr.contains(reason), "{stderr}"),
+            other => panic!("{reason}: expected Failed, got {other:?}"),
+        }
+    }
+}
+
 fn signer(name: &str) -> Signer {
     Signer {
         name: name.to_string(),

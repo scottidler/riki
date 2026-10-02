@@ -141,3 +141,70 @@ async fn a_custom_message_is_used() {
     assert_eq!(commit.author().email().ok(), Some("alice@example.com"));
     assert_eq!(commit.committer().name().ok(), Some("riki"));
 }
+
+#[tokio::test]
+async fn unchanged_on_a_tip_that_refuses_publish_is_an_index_conflict_not_a_200() {
+    let fx = Fixture::new(&[("README.md", "# home\n")]);
+    let wiki = fx.wiki().await;
+    let good = wiki.good().expect("good").commit();
+    let base = oid_of(&wiki, "README.md").await;
+    commit_files(&fx.upstream, BRANCH, &[("status.md", "x\n")], "reserved name");
+    let outcome = save(&wiki, &settings(), &alice(), &request("README.md", base, "# home"))
+        .await
+        .expect("save");
+    let SaveOutcome::IndexConflict { errors } = outcome else {
+        panic!("expected IndexConflict, got {outcome:?}");
+    };
+    assert!(errors.contains("reserved name /status"), "{errors}");
+    assert_eq!(wiki.good().expect("good").commit(), good, "good tip did not move");
+}
+
+#[tokio::test]
+async fn content_present_on_a_tip_that_refuses_publish_is_an_index_conflict_not_a_200() {
+    let fx = Fixture::new(&[("README.md", "# home\n")]);
+    let wiki = fx.wiki().await;
+    let good = wiki.good().expect("good").commit();
+    let base = oid_of(&wiki, "README.md").await;
+    commit_files(
+        &fx.upstream,
+        BRANCH,
+        &[("README.md", "# new\n"), ("status.md", "x\n")],
+        "same edit plus a reserved name",
+    );
+    let outcome = save(&wiki, &settings(), &alice(), &request("README.md", base, "# new"))
+        .await
+        .expect("save");
+    let SaveOutcome::IndexConflict { errors } = outcome else {
+        panic!("expected IndexConflict, got {outcome:?}");
+    };
+    assert!(errors.contains("reserved name /status"), "{errors}");
+    assert_eq!(wiki.good().expect("good").commit(), good, "good tip did not move");
+}
+
+#[tokio::test]
+async fn a_save_observed_outage_and_recovery_update_upstream_health() {
+    let fx = Fixture::new(&[("README.md", "# home\n")]);
+    let wiki = fx.wiki().await;
+    assert_eq!(wiki.unreachable(), None);
+
+    let parked = fx.tmp.path().join("parked.git");
+    std::fs::rename(&fx.upstream, &parked).expect("take upstream away");
+    let outcome = save(&wiki, &settings(), &alice(), &request("x.md", None, "x"))
+        .await
+        .expect("save");
+    assert!(matches!(outcome, SaveOutcome::FetchFailed(_)), "{outcome:?}");
+    assert!(
+        wiki.unreachable().is_some(),
+        "a save's failed fetch marks upstream unreachable"
+    );
+    let error = wiki.status_error().expect("degraded");
+    assert!(error.starts_with("upstream unreachable since "), "{error}");
+
+    std::fs::rename(&parked, &fx.upstream).expect("bring upstream back");
+    let outcome = save(&wiki, &settings(), &alice(), &request("x.md", None, "x"))
+        .await
+        .expect("save");
+    assert!(matches!(outcome, SaveOutcome::Saved { .. }), "{outcome:?}");
+    assert_eq!(wiki.unreachable(), None, "a save's successful fetch clears the outage");
+    assert_eq!(wiki.status_error(), None);
+}

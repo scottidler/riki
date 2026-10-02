@@ -156,19 +156,33 @@ impl Wiki {
         Ok(PublishOutcome::Published(index))
     }
 
+    /// Fetch upstream and record the result in the health state `/status` and the banner read: a
+    /// failure marks upstream unreachable (keeping the first `since`), a success clears it. Every
+    /// fetch (poll and save) goes through here so neither lags the other's observation.
+    pub async fn fetch(&self, guard: &RepoGuard<'_>) -> Result<(), StoreError> {
+        match self.store.fetch(guard).await {
+            Ok(()) => {
+                if let Some(down) = self.health().unreachable.take() {
+                    info!("fetch: upstream reachable again (down since {})", down.since);
+                }
+                Ok(())
+            }
+            Err(err) => {
+                let error = err.to_string();
+                warn!("fetch: failed: {error}");
+                let mut health = self.health();
+                let since = health.unreachable.as_ref().map_or_else(Utc::now, |down| down.since);
+                health.unreachable = Some(Unreachable { since, error });
+                Err(err)
+            }
+        }
+    }
+
     /// One poll: fetch under the mutex; on a tip other than the good tip, publish it.
     pub async fn poll(&self) -> Result<PollOutcome, StoreError> {
         let guard = self.store.lock().await;
-        if let Err(err) = self.store.fetch(&guard).await {
-            let error = err.to_string();
-            warn!("poll: fetch failed: {error}");
-            let mut health = self.health();
-            let since = health.unreachable.as_ref().map_or_else(Utc::now, |down| down.since);
-            health.unreachable = Some(Unreachable { since, error });
+        if self.fetch(&guard).await.is_err() {
             return Ok(PollOutcome::Unreachable);
-        }
-        if let Some(down) = self.health().unreachable.take() {
-            info!("poll: upstream reachable again (down since {})", down.since);
         }
         let Some(tip) = self.store.tip().await? else {
             debug!("poll: no tip yet");

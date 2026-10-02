@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 use crate::index::ErrorList;
 use crate::page::{self, NEW_PAGE_TRAILING, StaticRule};
 use crate::store::{FileCommit, PushOutcome, RepoGuard, Signer, StoreError};
-use crate::wiki::Wiki;
+use crate::wiki::{PublishOutcome, Wiki};
 
 /// What a save needs from config.
 #[derive(Debug, Clone)]
@@ -87,7 +87,7 @@ pub async fn save(
     let mut retries = 0;
     loop {
         // Step 3.
-        if let Err(err) = store.fetch(&guard).await {
+        if let Err(err) = wiki.fetch(&guard).await {
             warn!("save: fetch failed: {err}");
             return Ok(SaveOutcome::FetchFailed(err.to_string()));
         }
@@ -109,8 +109,11 @@ pub async fn save(
         let current_oid = current.as_ref().map(|(oid, _)| *oid);
         let holds_new = current.as_ref().is_some_and(|(_, bytes)| *bytes == new.as_bytes());
         if current_oid != request.base_oid {
-            publish_tip(wiki, &guard, tip).await?;
+            let refused = publish_tip(wiki, &guard, tip).await?;
             if holds_new {
+                if let Some(errors) = refused {
+                    return Ok(SaveOutcome::IndexConflict { errors });
+                }
                 info!("save: {} already holds the content at {tip}", request.path);
                 return Ok(SaveOutcome::ContentPresent);
             }
@@ -123,7 +126,9 @@ pub async fn save(
         }
         // Step 5.
         if holds_new {
-            publish_tip(wiki, &guard, tip).await?;
+            if let Some(errors) = publish_tip(wiki, &guard, tip).await? {
+                return Ok(SaveOutcome::IndexConflict { errors });
+            }
             return Ok(SaveOutcome::Unchanged);
         }
         // Step 6.
@@ -195,11 +200,20 @@ fn current_body(bytes: &[u8]) -> String {
     page::split_front_matter(&text).body.to_string()
 }
 
-async fn publish_tip(wiki: &Wiki, guard: &RepoGuard<'_>, tip: Oid) -> Result<(), StoreError> {
-    if !wiki.good().is_some_and(|good| good.commit() == tip) {
-        wiki.publish(guard, tip).await?;
+/// Publish the fetched tip unless it is already the good tip. `Some(errors)` when the tip's nav
+/// index refuses publish: the good tip did not move, so no 200 may be returned on top of it.
+async fn publish_tip(wiki: &Wiki, guard: &RepoGuard<'_>, tip: Oid) -> Result<Option<String>, StoreError> {
+    if wiki.good().is_some_and(|good| good.commit() == tip) {
+        return Ok(None);
     }
-    Ok(())
+    Ok(match wiki.publish(guard, tip).await? {
+        PublishOutcome::Published(_) => None,
+        PublishOutcome::Refused(index) => {
+            let errors = ErrorList(index.errors()).to_string();
+            warn!("save: upstream tip {tip} refuses publish: {errors}");
+            Some(errors)
+        }
+    })
 }
 
 #[cfg(test)]

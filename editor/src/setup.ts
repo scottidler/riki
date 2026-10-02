@@ -19,6 +19,7 @@ import { history } from '@milkdown/kit/plugin/history'
 import { $remark } from '@milkdown/kit/utils'
 import { visit } from 'unist-util-visit'
 import { alertHandler, alertPlugins } from './alert'
+import { imageView } from './images'
 import { insertTableCommand } from './table'
 import { taskPlugins } from './tasks'
 
@@ -58,12 +59,15 @@ export function stringifyOptions(prev: ToMarkdownOptions): ToMarkdownOptions {
 export interface EditorSetup {
   root: HTMLElement
   markdown: string
+  /** Repo path of the file being edited; relative images display resolved against its
+   *  directory (the document keeps the author's `src`). */
+  sourceFile: string
   /** Read by ProseMirror on every transaction; flip it and dispatch to change editability. */
   editable: () => boolean
 }
 
 /** Build (not create) an editor with riki's schema and serializer. Callers add UI plugins. */
-export function makeEditor({ root, markdown, editable }: EditorSetup): Editor {
+export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup): Editor {
   return Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, root)
@@ -78,6 +82,7 @@ export function makeEditor({ root, markdown, editable }: EditorSetup): Editor {
     .use(taskPlugins)
     .use(insertTableCommand)
     .use(alertPlugins)
+    .use(imageView(sourceFile))
     .config((ctx) => {
       ctx.update(blockContainerTypes.key, (prev) => [...prev, 'alert'])
     })

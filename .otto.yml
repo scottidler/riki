@@ -75,18 +75,33 @@ tasks:
   editor:
     help: "Typecheck, test, and rebuild the editor bundle; fail if the committed server/assets/ bundle is stale"
     bash: |
-      for tool in node pnpm; do
-        if ! command -v "$tool" >/dev/null 2>&1; then
-          echo "ERROR: $tool is not installed. The editor task needs node and pnpm to rebuild" >&2
-          echo "server/assets/editor.js from editor/ (see editor/package.json)." >&2
-          exit 1
-        fi
-      done
+      if ! command -v node >/dev/null 2>&1; then
+        echo "ERROR: node is not installed. The editor task needs node to rebuild" >&2
+        echo "server/assets/editor.js from editor/ (see editor/package.json)." >&2
+        exit 1
+      fi
       cd editor
-      pnpm install --frozen-lockfile --prefer-offline
-      pnpm run typecheck
-      pnpm run test
-      pnpm run build
+      # pnpm on PATH, else corepack running the exact pnpm editor/package.json pins in
+      # "packageManager" (a CI runner with node but no pnpm). Neither: fail, naming both.
+      PINNED="$(node -p 'require("./package.json").packageManager ?? ""')"
+      case "$PINNED" in
+        pnpm@*) ;;
+        *) echo "ERROR: editor/package.json \"packageManager\" must pin pnpm@<version>, got '$PINNED'" >&2; exit 1 ;;
+      esac
+      if command -v pnpm >/dev/null 2>&1; then
+        PNPM=(pnpm)
+      elif command -v corepack >/dev/null 2>&1; then
+        echo "=== pnpm not on PATH; using corepack $PINNED ==="
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+        PNPM=(corepack "$PINNED")
+      else
+        echo "ERROR: neither pnpm nor corepack is installed; the editor task needs $PINNED." >&2
+        exit 1
+      fi
+      "${PNPM[@]}" install --frozen-lockfile --prefer-offline
+      "${PNPM[@]}" run typecheck
+      "${PNPM[@]}" run test
+      "${PNPM[@]}" run build
       cd ..
       if ! git diff --exit-code -- server/assets/editor.js server/assets/editor.css; then
         echo "" >&2

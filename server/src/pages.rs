@@ -115,10 +115,11 @@ fn redirect_to_page(file: &str) -> Response {
     (StatusCode::MOVED_PERMANENTLY, [(header::LOCATION, location)]).into_response()
 }
 
-/// A 404. Paths riki's own routes own never offer "Create this page".
+/// A 404. Paths riki's own routes own never offer "Create this page". The homepage `/` creates
+/// `README.md`; any other page `/a/b` creates `a/b.md`.
 fn missing(path: &str, banners: &str, sidebar: &str) -> Response {
     let top = path.split('/').next().unwrap_or_default();
-    let file = format!("{path}.md");
+    let file = new_page_file(path);
     let creatable = !RESERVED.contains(&top) && riki_core::path::validate(&file).is_ok();
     let (body, action) = if creatable {
         (
@@ -132,6 +133,15 @@ fn missing(path: &str, banners: &str, sidebar: &str) -> Response {
         StatusCode::NOT_FOUND,
         render::page("Not found", &body, sidebar, banners, action),
     )
+}
+
+/// The file "Create this page" makes for the URL `path` (already trimmed of slashes).
+fn new_page_file(path: &str) -> String {
+    if path.is_empty() {
+        "README.md".to_string()
+    } else {
+        format!("{path}.md")
+    }
 }
 
 fn title(path: &str) -> String {

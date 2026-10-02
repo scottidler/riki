@@ -366,7 +366,20 @@ fn failed(label: &str, output: &Output, prefix: &str) -> StoreError {
 }
 
 /// Porcelain rejection reasons that mean "the remote branch moved": retry from a fresh fetch.
-const MOVED_REASONS: &[&str] = &["(fetch first)", "(non-fast-forward)", "(incorrect old value provided)"];
+/// The last three are the server-side compare-and-swap losing a concurrent push: stock
+/// receive-pack says `incorrect old value provided`; ref-transaction failures (GitHub's reported
+/// wording) say `cannot lock ref '<ref>': is at <oid> but expected <oid>` or `failed to update
+/// ref`. A bare `[remote rejected]` (hooks, protected branches, atomic-push aborts) is not here:
+/// retrying cannot fix it.
+/// Each entry matches when every one of its fragments is on the `!` line. `(failed to update
+/// ref)` keeps its parenthesis so the atomic-push `(failed to update refs)` does not match.
+const MOVED_REASONS: &[&[&str]] = &[
+    &["(fetch first)"],
+    &["(non-fast-forward)"],
+    &["(incorrect old value provided)"],
+    &["(cannot lock ref '", "': is at ", " but expected "],
+    &["(failed to update ref)"],
+];
 
 /// Read a finished `git push --porcelain`. Exit 0 is pushed. A `!` ref line with one of
 /// [`MOVED_REASONS`] is a non-fast-forward rejection. Anything else (a `!`
@@ -379,12 +392,16 @@ fn classify_push(output: &Output) -> Result<PushOutcome, StoreError> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let rejected = stdout.lines().find(|line| line.starts_with('!'));
     match rejected {
-        Some(line) if MOVED_REASONS.iter().any(|reason| line.contains(reason)) => {
-            Ok(PushOutcome::NonFastForward { line: line.to_string() })
-        }
+        Some(line) if is_moved(line) => Ok(PushOutcome::NonFastForward { line: line.to_string() }),
         Some(line) => Err(failed("git push", output, line)),
         None => Err(failed("git push", output, "")),
     }
+}
+
+fn is_moved(line: &str) -> bool {
+    MOVED_REASONS
+        .iter()
+        .any(|fragments| fragments.iter().all(|fragment| line.contains(fragment)))
 }
 
 #[cfg(test)]

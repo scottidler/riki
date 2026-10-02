@@ -150,6 +150,16 @@ async fn a_missing_page_is_404_with_create_this_page() {
 }
 
 #[tokio::test]
+async fn a_missing_homepage_is_404_with_create_readme() {
+    let fx = wiki_with(&[("a.md", "# a\n")]).await;
+    let reply = get(&fx.wiki, "/").await;
+    assert_eq!(reply.status, StatusCode::NOT_FOUND);
+    let html = reply.text();
+    assert!(html.contains("Create this page"), "{html}");
+    assert!(html.contains(r#"data-path="README.md""#), "{html}");
+}
+
+#[tokio::test]
 async fn reserved_paths_never_offer_create() {
     let fx = wiki_with(&[("README.md", "# home\n")]).await;
     for path in ["/_riki/anything", "/health/x", "/status/x"] {

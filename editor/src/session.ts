@@ -128,7 +128,7 @@ export class Session {
     this.#status = status
     this.#saveButton = save
 
-    const editor = await makeEditor({ root, markdown, editable: () => this.#editable })
+    const editor = await makeEditor({ root, markdown, sourceFile: this.#target.path, editable: () => this.#editable })
       .config(configureLinkTooltip)
       .use(linkTooltipPlugin)
       .create()

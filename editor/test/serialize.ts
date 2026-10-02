@@ -4,12 +4,16 @@ import { getMarkdown } from '@milkdown/kit/utils'
 import { makeEditor } from '../src/setup'
 
 /** Load `markdown` into riki's editor, run `edit` (if any), and return the editor and output. */
-export async function withEditor<T>(markdown: string, use: (editor: Editor) => T | Promise<T>): Promise<T> {
+export async function withEditor<T>(
+  markdown: string,
+  use: (editor: Editor, root: HTMLElement) => T | Promise<T>,
+  sourceFile = 'README.md',
+): Promise<T> {
   const root = document.createElement('div')
   document.body.appendChild(root)
-  const editor = await makeEditor({ root, markdown, editable: () => true }).create()
+  const editor = await makeEditor({ root, markdown, sourceFile, editable: () => true }).create()
   try {
-    return await use(editor)
+    return await use(editor, root)
   } finally {
     await editor.destroy()
     root.remove()
