@@ -5,6 +5,7 @@
 import type { Editor } from '@milkdown/kit/core'
 import { editorViewCtx } from '@milkdown/kit/core'
 import { configureLinkTooltip, linkTooltipPlugin } from '@milkdown/kit/component/link-tooltip'
+import { Selection } from '@milkdown/kit/prose/state'
 import { getMarkdown } from '@milkdown/kit/utils'
 import { checkRoundTrip, loadPage, savePage } from './api'
 import type { GuardVerdict, PageJson } from './api'
@@ -33,6 +34,8 @@ export interface PageTarget {
   path: string
   /** The file on GitHub, when the content remote is a GitHub repo. */
   source: string | null
+  /** What a not-yet-existing page starts with (`# <title>\n\n` from a "+" new page), or null. */
+  prefill?: string | null
 }
 
 export interface SessionHooks {
@@ -78,7 +81,8 @@ export class Session {
       return
     }
     this.#page = page
-    await this.#mount(page.body)
+    const starting = page['base-oid'] === null && page.body === '' ? (this.#target.prefill ?? '') : page.body
+    await this.#mount(starting)
     const baseOid = page['base-oid']
     if (baseOid === null) {
       this.#setGuard('skipped')
@@ -178,7 +182,11 @@ export class Session {
       const view = ctx.get(editorViewCtx)
       // ProseMirror reads `editable` on every state update; push one so it re-reads it now.
       view.updateState(view.state)
-      if (this.#editable) view.focus()
+      if (this.#editable) {
+        view.focus()
+        // A prefilled new page starts with the cursor after its title, ready to type.
+        if (this.#target.prefill) view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc)))
+      }
     })
     this.#refreshSave()
   }

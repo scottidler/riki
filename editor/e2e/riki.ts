@@ -68,9 +68,25 @@ export class Riki {
     git(['push', '--quiet', 'origin', 'HEAD:main'], this.work)
   }
 
+  /** `push`, then wait for the running riki's poller to serve `url` (a 200). */
+  async pushAndServe(files: Record<string, string>, url: string): Promise<void> {
+    this.push(files)
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      if ((await fetch(`${this.url}${url}`)).ok) return
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    throw new Error(`riki did not serve ${url} within 15s`)
+  }
+
   /** The file as upstream holds it now. */
   file(file: string): string {
     return git(['--git-dir', this.upstream, 'show', `main:${file}`])
+  }
+
+  /** How many commits upstream's main holds. */
+  commitCount(): number {
+    return Number(git(['--git-dir', this.upstream, 'rev-list', '--count', 'main']).trim())
   }
 
   /** Author email of upstream's newest commit. */

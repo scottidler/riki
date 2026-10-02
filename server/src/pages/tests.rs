@@ -113,6 +113,24 @@ async fn pages_show_the_sidebar_and_an_edit_button() {
 }
 
 #[tokio::test]
+async fn the_article_carries_the_blob_oid_it_was_rendered_from() {
+    let fx = wiki_with(&[("README.md", "# home\n"), ("a/b.md", "b\n")]).await;
+    let html = get(&fx.wiki, "/a/b").await.text();
+    let commit = fx.wiki.good().expect("good").commit();
+    let (oid, _) = fx
+        .wiki
+        .store()
+        .blob_at(commit, "a/b.md")
+        .await
+        .expect("read")
+        .expect("present");
+    assert!(
+        html.contains(&format!(r#"data-path="a/b.md" data-base-oid="{oid}""#)),
+        "{html}"
+    );
+}
+
+#[tokio::test]
 async fn the_edit_button_names_the_served_file() {
     let fx = wiki_with(&[("README.md", "# home\n"), ("a/b/README.md", "b\n")]).await;
     let html = get(&fx.wiki, "/a/b").await.text();

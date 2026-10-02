@@ -3,6 +3,7 @@
 
 import { Session } from './session'
 import type { PageTarget } from './session'
+import { newPageBodyFromSearch } from './newpage'
 
 /** The pieces of a rendered riki page the editor replaces after a save. */
 const SWAPPED = ['header .actions', '.riki-trail', '.riki-sidebar', 'main']
@@ -18,7 +19,7 @@ let active: Session | null = null
 function target(el: HTMLElement): PageTarget | null {
   const path = el.dataset['path']
   if (!path) return null
-  return { path, source: el.dataset['source'] ?? null }
+  return { path, source: el.dataset['source'] ?? null, prefill: el.id === 'riki-create' ? newPageBodyFromSearch(window.location.search) : null }
 }
 
 /** Fetch the page as riki now serves it (the good tip, which every 200 save published) and
@@ -34,6 +35,8 @@ async function rerender(): Promise<void> {
     const next = fresh.querySelector(selector)
     if (current && next) current.replaceWith(document.adoptNode(next))
   }
+  // A created page now exists: drop `?new=` so a reload is an ordinary view of it.
+  if (window.location.search) window.history.replaceState(null, '', window.location.pathname)
   for (const banner of document.querySelectorAll('.banner')) banner.remove()
   const header = document.querySelector('header')
   for (const banner of [...fresh.querySelectorAll('.banner')].reverse()) header?.after(document.adoptNode(banner))
@@ -65,6 +68,8 @@ export function bind(): void {
       event.preventDefault()
       void start(el)
     })
+    // "+" new page lands here with `?new=<title>`: open the editor without another click.
+    if (id === 'riki-create' && newPageBodyFromSearch(window.location.search) !== null) void start(el)
   }
 }
 

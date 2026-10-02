@@ -106,3 +106,23 @@
 - Leading-slash `url` in both routes vs. riki's internal slash-less URLs: the client navigates with it directly, as the move/restore responses already do.
 ### Open questions
 - None.
+
+## Phase 7: Page actions UI
+### Design decisions
+- Server renders the controls, the page script wires them. `render::page` puts `data-path` and `data-base-oid` on the `<article>` (existing pages only; a missing page's article carries neither) and a ⋯ menu (`#riki-more`, `.riki-menu`, items `data-riki-action="move|delete"`) after Edit; `sidebar()` emits a "+" (`data-riki-new="<folder>"`) on a root row (`Pages`) and on each top-level group header: server/src/render.rs:page_menu, add_button, sidebar. `Action::Edit` gained `base_oid`, taken from `blob_at` in `pages.rs` (the same blob the page was rendered from, so Move/Delete check against what the reader saw).
+- The menu is omitted per rule, not by JS: Move is not offered for any `README.md` (folder move, parked), Delete not for the root `README.md`; a page with neither gets no menu. This mirrors the server's 400s so the UI never offers a refused action.
+- The "+" button is a sibling after the group's `<p class="riki-nav-heading">`, positioned over it by CSS, so the heading markup the existing sidebar tests pin is byte-identical.
+- `?new=` prefill is the editor bundle's, not the server's: `editor/src/main.ts` auto-starts the session on `#riki-create` when the URL has a non-blank `new` param; `Session` uses `PageTarget.prefill` as the starting text only when the page does not exist (`base-oid` null and empty body). After Save, `rerender` drops `?new=` with `history.replaceState`. `?new` on an existing page has no `#riki-create`, so it is ignored.
+- Title -> H1 text is escaped (`\ ` * _ [ ] < > ~ | &`) and whitespace collapsed in `editor/src/newpage.ts`, shared by both bundles, so a title like `A *b*` is literal text in the H1.
+- Page script split: `page/ops.ts` (route calls returning `Reply<T>`, pure path helpers), `page/dialog.ts` (a plain-element modal, no `<dialog>`, so it runs under jsdom), `page/actions.ts` (the three flows), `page/main.ts` only delegates clicks. Delete is confirmed in the same modal, not `window.confirm`.
+- Move dialog: folder field filters `tree.folders` as you type; a typed name that is not a folder is offered as "Create folder x" (choosing it only fills the field); file name prefilled with the stem, `.md` added when missing. Move to the same path is refused client-side. The tree fetch failing degrades to a typed folder with the reason shown.
+- Delete: 200 replaces the article in place with "Deleted <path>." and Undo, empties the header actions, removes the pager, and swaps in the sidebar from a fresh GET of the same URL. `commit: null` (idempotent retry) shows no Undo. Undo posts `{path, commit}` from the delete response and navigates to the restore `url`.
+- Tests: vitest `test/page-actions.test.ts` (13: body escaping, path helpers, route bodies and error mapping, each dialog flow incl. no-Undo and refused delete); server render tests (article data, menu rules, plus placement/escaping) and a pages test for the oid; Playwright `e2e/actions.spec.ts` (the three Phase 7 criteria plus the root "+").
+### Deviations
+- None.
+### Tradeoffs
+- Cursor lands at the end of the prefilled H1, not in a new empty paragraph below it: the parsed `# T\n\n` is just a heading, and inserting an empty paragraph risks serializing an empty block if the author saves without typing. The author presses Enter to start the body.
+- Sidebar "+" only on the root and top-level group headers (the static `riki-nav-heading` rows), not on nested chevron groups: the doc says "root and each group header"; nested groups can be reached by typing the folder in the move dialog, and a "+" on every chevron row crowds the sidebar.
+- `data-path` on both the Edit button and the article vs. reading only the article: the editor bundle already reads the button, and the doc asks for the article's attribute for the page script.
+### Open questions
+- None.

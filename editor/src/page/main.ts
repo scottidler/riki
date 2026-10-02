@@ -19,6 +19,9 @@ import {
   toggleGroup,
   tocHeadings,
 } from './ui'
+import { deleteDialog, menuIsOpen, moveDialog, newPageDialog, setMenuOpen } from './actions'
+
+const navigate = (url: string): void => window.location.assign(url)
 
 const root = document.documentElement
 const darkQuery = window.matchMedia?.('(prefers-color-scheme: dark)')
@@ -73,6 +76,23 @@ document.addEventListener('click', (event) => {
     toggleGroup(toggle)
     return
   }
+  const add = target?.closest<HTMLElement>('[data-riki-new]')
+  if (add) {
+    newPageDialog(add.dataset['rikiNew'] ?? '', navigate)
+    return
+  }
+  if (target?.closest('#riki-more')) {
+    setMenuOpen(!menuIsOpen())
+    return
+  }
+  const action = target?.closest<HTMLElement>('[data-riki-action]')
+  if (action) {
+    setMenuOpen(false)
+    if (action.dataset['rikiAction'] === 'move') void moveDialog(navigate)
+    else if (action.dataset['rikiAction'] === 'delete') deleteDialog(navigate)
+    return
+  }
+  if (menuIsOpen()) setMenuOpen(false)
   const copy = target?.closest<HTMLElement>('.riki-copy')
   if (copy) {
     void copyFrom(copy, navigator.clipboard)
@@ -82,7 +102,9 @@ document.addEventListener('click', (event) => {
 })
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && document.body.classList.contains('riki-nav-open')) setNavOpen(document, false)
+  if (event.key !== 'Escape') return
+  if (menuIsOpen()) setMenuOpen(false)
+  else if (document.body.classList.contains('riki-nav-open')) setNavOpen(document, false)
 })
 
 window.addEventListener('scroll', spy, { passive: true })

@@ -111,7 +111,7 @@ async fn page_at(state: &AppState, raw_path: &str, query: &PageQuery) -> Respons
     let Some(file) = index.file_for_url(path) else {
         return missing(&chrome);
     };
-    let source = match state.wiki.store().read_blob(index.commit(), file).await {
+    let (base_oid, source) = match state.wiki.store().blob_at(index.commit(), file).await {
         Ok(Some(blob)) => blob,
         Ok(None) => {
             error!("page_at: {file} is in the index of {} but not the tree", index.commit());
@@ -129,6 +129,7 @@ async fn page_at(state: &AppState, raw_path: &str, query: &PageQuery) -> Respons
         .map(|base| format!("{base}{}", encode_path(file)));
     let action = Action::Edit {
         file,
+        base_oid: &base_oid.to_string(),
         source: source_url.as_deref(),
     };
     let title = index.node(path).map_or_else(

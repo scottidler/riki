@@ -40,6 +40,7 @@ fn page_body_cannot_inject_into_other_slots() {
 
 const EDIT: Action<'static> = Action::Edit {
     file: "a/b.md",
+    base_oid: "0123456789abcdef0123456789abcdef01234567",
     source: None,
 };
 
@@ -62,9 +63,70 @@ fn the_edit_button_is_live_and_names_the_file() {
 }
 
 #[test]
+fn the_article_carries_its_file_and_base_oid() {
+    let html = page(&view("T", "body", "side", EDIT));
+    assert!(
+        html.contains(
+            r#"<article class="riki-prose" data-path="a/b.md" data-base-oid="0123456789abcdef0123456789abcdef01234567">"#
+        ),
+        "{html}"
+    );
+    let missing = page(&view("T", "body", "side", Action::Create { file: "a.md" }));
+    assert!(missing.contains(r#"<article class="riki-prose">"#), "{missing}");
+}
+
+#[test]
+fn the_more_menu_offers_move_and_delete_but_not_for_readmes() {
+    let html = page(&view("T", "body", "side", EDIT));
+    assert!(html.contains(r#"id="riki-more""#), "{html}");
+    assert!(
+        html.contains(r#"data-riki-action="move""#) && html.contains(r#"data-riki-action="delete""#),
+        "{html}"
+    );
+    let folder_index = Action::Edit {
+        file: "a/README.md",
+        base_oid: "0",
+        source: None,
+    };
+    let html = page(&view("T", "body", "side", folder_index));
+    assert!(html.contains(r#"data-riki-action="delete""#), "{html}");
+    assert!(
+        !html.contains(r#"data-riki-action="move""#),
+        "a folder index cannot move: {html}"
+    );
+    let home = Action::Edit {
+        file: "README.md",
+        base_oid: "0",
+        source: None,
+    };
+    let html = page(&view("T", "body", "side", home));
+    assert!(!html.contains("riki-more"), "the home page has no actions: {html}");
+    assert!(html.contains(r#"id="riki-edit""#), "{html}");
+}
+
+#[test]
+fn the_sidebar_has_a_plus_on_the_root_and_on_each_group() {
+    let index = with_order(&["a.md", "g/x.md", "g/h/y.md"], &[]);
+    let html = sidebar(index.tree(), "");
+    assert!(html.contains(r#"data-riki-new="""#), "root +: {html}");
+    assert!(html.contains(r#"data-riki-new="g""#), "group +: {html}");
+    assert_eq!(
+        html.matches("data-riki-new").count(),
+        2,
+        "nested groups get none: {html}"
+    );
+}
+
+#[test]
+fn the_plus_escapes_the_folder_name() {
+    assert!(add_button("a\"b", "A").contains(r#"data-riki-new="a&quot;b""#));
+}
+
+#[test]
 fn the_edit_button_carries_the_escaped_github_link() {
     let edit = Action::Edit {
         file: "a/b.md",
+        base_oid: "0123456789abcdef0123456789abcdef01234567",
         source: Some("https://github.com/o/r/blob/main/a/b.md?x=\"1\""),
     };
     let html = page(&view("T", "body", "side", edit));

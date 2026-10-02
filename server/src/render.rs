@@ -52,8 +52,13 @@ pub fn fill(template: &str, vars: &[(&str, &str)]) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action<'a> {
     /// An existing page: the Edit button for the file at this repo path, with the file's page on
-    /// GitHub when the content remote is a GitHub repo (the editor links it when it refuses).
-    Edit { file: &'a str, source: Option<&'a str> },
+    /// GitHub when the content remote is a GitHub repo (the editor links it when it refuses),
+    /// and the blob oid the page was rendered from (the move and delete base).
+    Edit {
+        file: &'a str,
+        base_oid: &'a str,
+        source: Option<&'a str>,
+    },
     /// Nothing to act on: a path riki's own routes own.
     None,
     /// A missing page: offer to create the file at this repo path.
@@ -130,18 +135,29 @@ pub struct PageView<'a> {
 /// A full page: header, sidebar, breadcrumbs, the rendered body, and the "On this page" list.
 pub fn page(view: &PageView<'_>) -> String {
     debug!("render::page: title={:?} action={:?}", view.title, view.action);
-    let action_html = match view.action {
-        Action::Edit { file, source } => {
+    let (action_html, article_data) = match view.action {
+        Action::Edit { file, base_oid, source } => {
             let source = source.map_or_else(String::new, |url| format!(r#" data-source="{}""#, escape_html(url)));
-            format!(
-                r#"<button id="riki-edit" type="button" data-path="{}"{source}>Edit</button>"#,
-                escape_html(file)
+            (
+                format!(
+                    r#"<button id="riki-edit" type="button" data-path="{}"{source}>Edit</button>{}"#,
+                    escape_html(file),
+                    page_menu(file)
+                ),
+                format!(
+                    r#" data-path="{}" data-base-oid="{}""#,
+                    escape_html(file),
+                    escape_html(base_oid)
+                ),
             )
         }
-        Action::None => String::new(),
-        Action::Create { file } => format!(
-            r##"<a id="riki-create" href="#" data-path="{}">Create this page</a>"##,
-            escape_html(file)
+        Action::None => (String::new(), String::new()),
+        Action::Create { file } => (
+            format!(
+                r##"<a id="riki-create" href="#" data-path="{}">Create this page</a>"##,
+                escape_html(file)
+            ),
+            String::new(),
         ),
     };
     fill(
@@ -155,10 +171,51 @@ pub fn page(view: &PageView<'_>) -> String {
             ("__BANNERS__", view.banners_html),
             ("__SIDEBAR__", view.sidebar_html),
             ("__BREADCRUMBS__", view.breadcrumbs_html),
+            ("__ARTICLE_DATA__", &article_data),
             ("__BODY__", view.body_html),
             ("__PAGER__", view.pager_html),
             ("__TOC__", &toc(view.toc)),
         ],
+    )
+}
+
+/// The ⋯ page-actions menu next to Edit. Move is offered for any page but a `README.md` (a
+/// folder's index page: moving it is a folder move) and Delete for any page but the root
+/// `README.md` (the home page); a page with neither gets no menu. The page script opens it.
+fn page_menu(file: &str) -> String {
+    let can_move = !is_readme(file);
+    let can_delete = file != "README.md";
+    if !can_move && !can_delete {
+        return String::new();
+    }
+    let mut items = String::new();
+    if can_move {
+        items.push_str(r#"<button type="button" role="menuitem" data-riki-action="move">Move…</button>"#);
+    }
+    if can_delete {
+        items.push_str(r#"<button type="button" role="menuitem" data-riki-action="delete">Delete</button>"#);
+    }
+    format!(
+        concat!(
+            r#"<div class="riki-more">"#,
+            r#"<button id="riki-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Page actions" title="Page actions">⋯</button>"#,
+            r#"<div class="riki-menu" role="menu" hidden>{}</div></div>"#
+        ),
+        items
+    )
+}
+
+fn is_readme(file: &str) -> bool {
+    file.rsplit('/').next() == Some("README.md")
+}
+
+/// The "+" that starts a new page in `folder` (a repo directory, `""` for the root); the page
+/// script asks for the title.
+fn add_button(folder: &str, label: &str) -> String {
+    format!(
+        r#"<button type="button" class="riki-nav-add" data-riki-new="{}" aria-label="New page in {}" title="New page">+</button>"#,
+        escape_html(folder),
+        escape_html(label)
     )
 }
 
@@ -304,7 +361,10 @@ fn listed_first<'a>(
 /// only along the path to the current page. `current` is the URL path being shown (no leading
 /// `/`).
 pub fn sidebar(root: &PageNode, current: &str) -> String {
-    let mut out = String::from(r#"<ul class="riki-nav-list">"#);
+    let mut out = format!(
+        r#"<div class="riki-nav-root-head"><span>Pages</span>{}</div><ul class="riki-nav-list">"#,
+        add_button("", "the top level")
+    );
     let mut list_open = true;
     for item in &nav_items(root) {
         match item {
@@ -325,7 +385,8 @@ pub fn sidebar(root: &PageNode, current: &str) -> String {
                     None => escape_html(label),
                 };
                 out.push_str(&format!(
-                    r#"<div class="riki-nav-group"><p class="riki-nav-heading">{head}</p><ul class="riki-nav-list">"#
+                    r#"<div class="riki-nav-group"><p class="riki-nav-heading">{head}</p>{}<ul class="riki-nav-list">"#,
+                    add_button(&node.url, label)
                 ));
                 for child in items {
                     out.push_str(&nav_item(child, current));
