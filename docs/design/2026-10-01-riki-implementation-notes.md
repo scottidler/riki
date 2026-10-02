@@ -352,3 +352,39 @@ Source: the review-panel synthesis at `/tmp/review-panel/JYGHyoQC/synthesis.md` 
 - Item 5 is matched against git's own strings plus the public GitHub logs codex cited. No live concurrent push against GitHub has been run, so whether GitHub emits one of these two reasons on today's servers is still unverified until there is a race test against a real GitHub repo.
 - GitHub CI is still unrun (riki-poc is local only). The reusable workflow does not install node either. ubuntu-latest ships a system node, but its version against `engines.node >=24` (advisory, not enforced) has not been checked on a runner.
 - Seen once during this round, not part of it: `server/src/tests.rs::non_default_listen_is_what_gets_bound` failed with `Address already in use (os error 98)`, then passed on rerun. The test binds port 0, drops the probe, then binds that port again. In that window the sibling test `bind_fails_loudly_when_the_port_is_taken` runs in parallel and also binds port 0, and the kernel can hand it the port that was just freed. Fixing it means holding the listener instead of re-binding (for example, passing a pre-bound `TcpListener` into `bind`). Left alone because it is outside this audit's scope.
+
+### Round 1 follow-up (supersedes the flaky-test and GitHub-CI open questions above)
+
+Two follow-ups the coordinator asked for before the release:
+
+- **Flaky `server/src/tests.rs::non_default_listen_is_what_gets_bound`.** The test now configures `listen: 127.0.0.2:0` and asserts the bound IP is `127.0.0.2` and the port is nonzero. It no longer binds a probe port, drops it, and binds that port again. The kernel picks the port at bind time, so there is no window for the sibling test to take it. `config::tests::non_default_listen_takes_effect` still covers port parsing.
+  - Evidence the test still bites: with `bind` hard-coded to `127.0.0.1:0`, it fails `left: "127.0.0.1" right: "127.0.0.2"`.
+  - `cargo test -p riki-server` ran 10 times in a row with 10 passes and 0 failures.
+- **Editor task on older node.** I ran `otto editor` under mise-installed node 20.20.2 and 22.23.3, with no pnpm on PATH (the corepack path), the way a stock runner would.
+
+  | node | result |
+  | --- | --- |
+  | 20.20.2, `engines.node >=24` | pnpm and corepack worked; pnpm only printed `WARN Unsupported engine`. `tsc` passed. vitest crashed starting every worker with `TypeError: webidl.util.markAsUncloneable is not a function` (undici 8.11.2, loaded by jsdom 30.1.1). 0 tests ran. |
+  | 22.23.3, `engines.node >=24` | passed: 145 tests, and the bundle was byte-identical to the committed one. pnpm only warned about engines. |
+  | 24.4.1 (local) | passed (`otto ci`). |
+
+  The failure on 20 comes from the code's dependencies, not from the engines field or corepack. The declared dependency floors are:
+  - jsdom: `^22.22.2 || ^24.15.0 || >=26.0.0`
+  - undici: `>=22.19.0`
+  - vitest: `^22.12.0 || ^24.0.0 || >=26.0.0`
+  - vite: `^20.19.0 || >=22.12.0`
+
+  So the editor truly needs node 22 or newer. 24.4.1 is outside jsdom's declared range but works.
+
+#### Design decisions
+- `editor/package.json` `engines.node` is now `>=22.22.2`, down from `>=24`. That is jsdom's 22.x floor, and it was verified at 22.23.3 and 24.4.1.
+- The `editor` task now enforces `engines.node` as a hard floor before pnpm runs (`.otto.yml`, editor task). pnpm only warns on engines. Node 20 now stops with `ERROR: node 20.20.2 is older than editor/package.json engines.node ">=22.22.2".` instead of a vitest worker crash. The task requires `engines.node` to be in `>=X.Y.Z` form and fails if it is not.
+
+#### Deviations
+- None.
+
+#### Tradeoffs
+- Fixing the test by binding a distinct loopback address with port 0, vs passing a pre-bound listener into `bind`: the test change keeps `bind(&Config)` as it is and still proves the configured address is the one bound.
+
+#### Open questions
+- Which node GitHub's ubuntu-latest image ships has not been checked here; no runner has run yet. If it is below 22.22.2, `otto ci` fails there, clearly, at the node-floor check. The reusable `scottidler/github-actions` `rust-ci.yml` would then need a node setup step. A caller workflow cannot add steps inside a reusable workflow's job. That is Scott's call, in that repo.

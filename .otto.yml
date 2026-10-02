@@ -81,6 +81,17 @@ tasks:
         exit 1
       fi
       cd editor
+      # engines.node is a hard floor here (pnpm only warns): below it vitest's jsdom dies on a
+      # missing undici API, so say which node is too old instead.
+      node -e '
+        const want = require("./package.json").engines?.node ?? "";
+        const floor = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(want);
+        if (!floor) { console.error(`ERROR: editor/package.json engines.node must be ">=X.Y.Z", got "${want}"`); process.exit(1); }
+        const have = process.versions.node.split(".").map(Number);
+        const need = floor.slice(1).map(Number);
+        const cmp = have[0] - need[0] || have[1] - need[1] || have[2] - need[2];
+        if (cmp < 0) { console.error(`ERROR: node ${process.versions.node} is older than editor/package.json engines.node "${want}".`); process.exit(1); }
+      '
       # pnpm on PATH, else corepack running the exact pnpm editor/package.json pins in
       # "packageManager" (a CI runner with node but no pnpm). Neither: fail, naming both.
       PINNED="$(node -p 'require("./package.json").packageManager ?? ""')"
