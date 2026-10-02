@@ -307,18 +307,23 @@ Ship: `bump release` from `main` with `--install "cargo install --path server --
 
 Run against the home deploy (`127.0.0.1:8737`, `/version` -> `v0.1.1`, `e4451b9`) and the `wiki-operations` checkout (`a8021a8` = `main` + docs) on 2026-10-02.
 
-- [ ] `curl -s '127.0.0.1:8737/_riki/api/search?q=lapt' | jq -r '.hits[0].url'` prints `/` (README's "Laptop push check" line) (Phase 8)
+- [x] `curl -s '127.0.0.1:8737/_riki/api/search?q=lapt' | jq -r '.hits[0].url'` prints `/` (README's "Laptop push check" line) (Phase 8)
   - Observed on main: `curl -s -o /dev/null -w '%{http_code}' '127.0.0.1:8737/_riki/api/search?q=lapt'` -> `404` (route absent); README holds "Laptop push check: this line came from a git push" (`gh api repos/scottidler/riki-content/contents/README.md`)
+  - Observed on v0.1.2 (`2098d71`, home deploy, 2026-10-02): `.hits[0]` -> `{"url":"/","title":"Wiki","snippet":"riki. Pages are Markdown files in this repo; ... Laptop push check: this line came from a git push, not the browser."}`
 Criteria 2-4 write commits, so they run against a test riki pointed at `scottidler/riki-content-test`, never the home content repo.
 
-- [ ] A browser move of a page creates exactly one upstream commit whose `git diff -M --name-status HEAD~1 HEAD` line is `R100 <from> <to>`, and `curl -s -o /dev/null -w '%{http_code} %{redirect_url}' <old-url>` prints `301 <new-url>` (Phase 4, 7)
+- [x] A browser move of a page creates exactly one upstream commit whose `git diff -M --name-status HEAD~1 HEAD` line is `R100 <from> <to>`, and `curl -s -o /dev/null -w '%{http_code} %{redirect_url}' <old-url>` prints `301 <new-url>` (Phase 4, 7)
   - Observed on main: no move route (`GET /_riki/api/move` -> 404)
-- [ ] Delete then Undo from the browser leaves upstream with exactly two new commits and the page's bytes identical to before (`git diff HEAD~2 HEAD` empty) (Phase 3, 7)
+  - Observed on v0.1.2 (test riki on `127.0.0.1:8738` over `riki-content-test`, Playwright): move `notes/race.md` -> `archive/race.md` added 1 commit (`9e1a699`), `R100	notes/race.md	archive/race.md`; `GET /notes/race` -> `301 /archive/race`
+- [x] Delete then Undo from the browser leaves upstream with exactly two new commits and the page's bytes identical to before (`git diff HEAD~2 HEAD` empty) (Phase 3, 7)
   - Observed on main: not runnable, no delete route
-- [ ] A "+" new page in `notes` with title "AC4 probe" creates no commit until Save, then exactly one adding `notes/ac4-probe.md` (Phase 6, 7)
+  - Observed on v0.1.2 (same test riki): delete then Undo on `notes/prose.md`, restore response `200`, 2 commits (`a5d76f2`, `dc3496f`), `git diff HEAD~2 HEAD` empty, bytes identical. A first attempt (`2dda448`) got no restore commit: the harness closed the browser about a second after clicking Undo, riki logged the delete and no restore, so the in-flight restore was dropped before it ran; that file was restored by API (`453090d`) and the run repeated waiting on the restore response
+- [x] A "+" new page in `notes` with title "AC4 probe" creates no commit until Save, then exactly one adding `notes/ac4-probe.md` (Phase 6, 7)
   - Observed on main: not runnable, no "+" control; `notes/ac4-probe.md` absent (`gh api 'repos/scottidler/riki-content-test/git/trees/main?recursive=1' --jq '.tree[].path'` lists `notes/prose.md`, `notes/race.md` only)
-- [ ] `pnpm -C editor run test` passes with block, slash, tooltip, and table-block registered in `makeEditor`, and `editor/fixtures/canonical/` still holds 66 files, unchanged (`git diff --stat a8021a8 -- editor/fixtures/canonical` empty) and all byte-identical (Phases 11-15)
+  - Observed on v0.1.2 (same test riki): 0 commits after the title dialog, Save response `200`, then 1 commit (`1cc2b2d`) `A	notes/ac4-probe.md`
+- [x] `pnpm -C editor run test` passes with block, slash, tooltip, and table-block registered in `makeEditor`, and `editor/fixtures/canonical/` still holds 66 files, unchanged (`git diff --stat a8021a8 -- editor/fixtures/canonical` empty) and all byte-identical (Phases 11-15)
   - Observed on main (`a8021a8`): `ls editor/fixtures/canonical | wc -l` -> `66`; `pnpm -C editor run test` -> `Test Files 7 passed (7)`, `Tests 169 passed (169)`, with none of the four plugins registered
+  - Observed on v0.1.2 (`07fec8d` + bump): `pnpm -C editor run test` -> `Test Files 15 passed (15)`, `Tests 261 passed (261)`; `ls editor/fixtures/canonical | wc -l` -> `66`; `git diff --stat a8021a8 -- editor/fixtures/canonical` empty
 
 ## Resolved Decisions
 
@@ -419,6 +424,8 @@ Criteria 2-4 write commits, so they run against a test riki pointed at `scottidl
   - Cheap-win: tree, new-page, search, move and restore `url`s percent-encoded like the sidebar, and the link box writes encoded relative links; Save drops only `?new=`, keeping other params and the hash; the new-page H1 escapes `#` so a trailing ` #` stays in the title
   - Deferred (parked rows in Non-Goals): search palette stale result; pasted HTML table `:---`
   - Open questions answered: Q1 the empty alert keeps `> <br />` (Milkdown's universal empty-paragraph form; the marker line meets Phase 13); Q2 no "Add row after", the boundary `+` already meets row add; Q3 paste stays parked
+- **v0.1.2 release and acceptance run** (2026-10-02): `bump release` from `main` -> `2098d71`, CI green, tag `v0.1.2`, `cargo install --path server --locked`, `riki` user unit restarted; `/version` -> `{"version":"v0.1.2","git_sha":"2098d71"}`, `/status` ok; startup log shows the redirect walk (3 commits, 2 ms) and search build before `riki listening`. AC1 on the home deploy; AC2-4 in Playwright against a test riki over `riki-content-test` (start `757d68a`, end `c246244`, tree identical to start after moving `race.md` back and deleting the AC4 page); AC5 local. All five pass
+  - Found: closing the browser mid-operation drops the request before the op runs (first AC3 attempt); nothing is written, and the user gets no answer
 
 ## References
 
