@@ -5,6 +5,6 @@ members = ["core", "server"]
 # One version for the whole workspace; one flat `v*` tag on main (never
 # per-crate tags). Every member inherits via `version.workspace = true`.
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Scott Idler"]
