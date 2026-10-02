@@ -216,3 +216,32 @@ test('typing / in an empty paragraph opens the slash menu; Heading 2 is saved, a
   await expect(page.locator('.riki-editor')).toHaveCount(0)
   expect(riki.file('guide.md')).toBe('# Guide\n\nA canonical page.\n\n## Next\n\n- one\n- two\n')
 })
+
+test("clicking a table's column handle and Add column after saves the table with one more column", async ({ page, riki }) => {
+  await riki.pushAndServe({ 'table.md': '# Table\n\n| Name | Value |\n| --- | --- |\n| alpha | 1 |\n' }, '/table')
+  await page.goto(`${riki.url}/table`)
+  await page.locator('#riki-edit').click()
+  await expect(editor(page)).toHaveAttribute('contenteditable', 'true')
+
+  await editor(page).locator('th').filter({ hasText: 'Name' }).hover()
+  const handle = page.locator('.milkdown-table-block [data-role="col-drag-handle"]')
+  await expect(handle).toBeVisible()
+  const header = (await editor(page).locator('th').first().boundingBox())!
+  const handleBox = (await handle.boundingBox())!
+  // Over the hovered column, on its top edge.
+  expect(handleBox.x).toBeGreaterThanOrEqual(header.x)
+  expect(handleBox.x + handleBox.width).toBeLessThanOrEqual(header.x + header.width)
+  expect(handleBox.y).toBeLessThan(header.y + 4)
+
+  await handle.click()
+  const add = handle.locator('[data-control="table-add-col-after"]')
+  await expect(add).toBeVisible()
+  await add.click()
+  await expect(editor(page).locator('th')).toHaveCount(3)
+  await editor(page).locator('th').nth(1).click()
+  await page.keyboard.type('Added')
+
+  await control(page, 'save').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('table.md')).toBe('# Table\n\n| Name | Added | Value |\n| --- | --- | --- |\n| alpha | | 1 |\n')
+})

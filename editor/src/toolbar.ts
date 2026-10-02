@@ -15,11 +15,10 @@ import {
   wrapInHeadingCommand,
   wrapInOrderedListCommand,
 } from '@milkdown/kit/preset/commonmark'
-import { toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
+import { insertTableCommand, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
 import { toggleLinkCommand } from '@milkdown/kit/component/link-tooltip'
 import { callCommand } from '@milkdown/kit/utils'
 import { ALERT_ICON_PATHS, ALERT_KINDS, isAlertKind, setAlertCommand } from './alert'
-import { insertTableCommand } from './table'
 import { makeTasksCommand } from './tasks'
 
 /** A new table: a header row plus one body row, three columns. */

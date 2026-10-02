@@ -1,5 +1,6 @@
-// The Milkdown setup riki edits with: presets, the untitled-image fix, the alert node, and the
-// stringify set Phase 0a picked (`{bullet: '-', rule: '-'}` plus the `---` table handler). The
+// The Milkdown setup riki edits with: presets, the untitled-image fix, unaligned new table cells,
+// the alert node, the editing UI plugins, and the stringify set Phase 0a picked
+// (`{bullet: '-', rule: '-'}` plus the `---` table handler). The
 // serializer's output is the content repo's canonical format, so tests and the browser build
 // share this one function.
 
@@ -23,7 +24,8 @@ import { blockHandle, configureBlockHandle } from './blockhandle'
 import { imageView } from './images'
 import { linkBoxPlugin } from './linkbox'
 import { configureSelectionToolbar, selectionToolbar } from './selectiontoolbar'
-import { insertTableCommand } from './table'
+import { unalignedTableCells } from './table'
+import { configureTableHandles, tableHandles } from './tablehandles'
 import { configureSlashMenu, slashMenu } from './slashmenu'
 import { taskPlugins } from './tasks'
 
@@ -86,9 +88,9 @@ export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup
     .use(imageTitleFix)
     .use(commonmark)
     .use(gfm)
+    .use(unalignedTableCells)
     .use(history)
     .use(taskPlugins)
-    .use(insertTableCommand)
     .use(alertPlugins)
     .use(imageView(sourceFile))
     .use(linkBoxPlugin(sourceFile))
@@ -98,6 +100,8 @@ export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup
     .use(blockHandle)
     .config(configureSlashMenu)
     .use(slashMenu)
+    .config(configureTableHandles)
+    .use(tableHandles)
     .config((ctx) => {
       ctx.update(blockContainerTypes.key, (prev) => [...prev, 'alert'])
     })

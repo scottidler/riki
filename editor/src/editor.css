@@ -84,10 +84,13 @@
 .riki-editor-root .ProseMirror { min-height: 12rem; outline: none; caret-color: var(--riki-accent); }
 .riki-editor-root .ProseMirror[contenteditable="false"] { opacity: 0.72; }
 .riki-editor-root .ProseMirror pre { white-space: pre; }
-/* The editor's table is a direct child of the content root, so it is its own scroll box; its
- * tbody (ProseMirror puts every row there) lays out as the full-width table the reader shows. */
-.riki-editor-root .ProseMirror > table { display: block; width: 100%; max-width: 100%; overflow-x: auto; }
-.riki-editor-root .ProseMirror > table > tbody { display: table; width: 100%; table-layout: auto; border-collapse: collapse; }
+/* The editor's table sits in table-block's node view; the content table is its own scroll box
+ * and its tbody (ProseMirror puts every row there) lays out as the full-width table the reader
+ * shows. The handles sit outside that box so it never clips them. */
+.riki-editor-root .milkdown-table-block { position: relative; margin: 24px 0 32px; }
+.riki-editor-root .milkdown-table-block .table-wrapper { position: relative; }
+.riki-editor-root .milkdown-table-block table.children { display: block; width: 100%; max-width: 100%; margin: 0; overflow-x: auto; }
+.riki-editor-root .milkdown-table-block table.children > tbody { display: table; width: 100%; table-layout: auto; border-collapse: collapse; }
 .riki-editor-root .ProseMirror .selectedCell::after { background: color-mix(in srgb, var(--riki-accent) 14%, transparent); }
 .riki-editor-root .ProseMirror .column-resize-handle { background-color: var(--riki-accent); }
 .riki-editor-root .markdown-alert-title { user-select: none; }
@@ -209,6 +212,72 @@
 .riki-block-menu [disabled] { opacity: 0.45; cursor: default; }
 .riki-block-submenu { display: flex; flex-direction: column; margin: 0 0 0.25rem 0.75rem; padding-left: 0.25rem; border-left: 1px solid var(--riki-border); }
 .ProseMirror[data-dragging="true"] .ProseMirror-selectednode { opacity: 0.5; }
+
+/* Table handles (table-block): a pill on the hovered column's top edge and the row's left edge,
+ * each opening a menu; a line with a + on the cell boundary under the pointer. The handles
+ * straddle the edge so the pointer reaches them without crossing the boundary zone that swaps
+ * them for the + lines. table-block sets their left/top; [data-show] toggles them. */
+.milkdown-table-block .handle, .milkdown-table-block .drag-preview { position: absolute; z-index: 30; }
+.milkdown-table-block .cell-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--riki-border);
+  border-radius: 6px;
+  background: var(--riki-bg-raised);
+  color: var(--riki-text-muted);
+  font: 600 0.75rem/1 var(--riki-font);
+  cursor: grab;
+}
+.milkdown-table-block [data-role="col-drag-handle"] { height: 1rem; min-width: 1.75rem; transform: translateY(50%); }
+.milkdown-table-block [data-role="row-drag-handle"] { width: 1rem; min-height: 1.75rem; transform: translateX(50%); }
+.milkdown-table-block .cell-handle:hover { background: var(--riki-surface-strong); color: var(--riki-text-strong); }
+.milkdown-table-block .button-group {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.25rem;
+  border: 1px solid var(--riki-border);
+  border-radius: 12px;
+  background: var(--riki-bg-raised);
+  box-shadow: var(--riki-shadow-lg);
+  cursor: default;
+}
+.milkdown-table-block [data-role="col-drag-handle"] .button-group { top: calc(100% + 4px); left: 50%; transform: translateX(-50%); }
+.milkdown-table-block [data-role="row-drag-handle"] .button-group { top: 0; left: calc(100% + 4px); }
+.milkdown-table-block .button-group button, .milkdown-table-block .add-button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--riki-text-muted);
+  font: 500 0.8125rem/1 var(--riki-font);
+  cursor: pointer;
+}
+.milkdown-table-block .button-group button { display: block; height: 2rem; padding: 0 0.625rem; text-align: left; white-space: nowrap; }
+.milkdown-table-block .button-group button:hover, .milkdown-table-block .add-button:hover {
+  background-color: var(--riki-surface-strong);
+  color: var(--riki-text-strong);
+}
+.milkdown-table-block .line-handle { background: var(--riki-accent); }
+.milkdown-table-block [data-role="y-line-drag-handle"] { top: 0; width: 2px; }
+.milkdown-table-block [data-role="x-line-drag-handle"] { left: 0; height: 2px; }
+.milkdown-table-block .add-button {
+  position: absolute;
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border-color: var(--riki-border);
+  background: var(--riki-bg-raised);
+}
+.milkdown-table-block [data-role="y-line-drag-handle"] .add-button { top: -1.5rem; left: 50%; transform: translateX(-50%); }
+.milkdown-table-block [data-role="x-line-drag-handle"] .add-button { left: -1.5rem; top: 50%; transform: translateY(-50%); }
+.milkdown-table-block .drag-preview { opacity: 0.6; pointer-events: none; background: var(--riki-bg-raised); }
+/* Last, so it beats the display of the rules above. */
+.milkdown-table-block [data-show="false"] { display: none; }
 
 .riki-slash-menu {
   position: absolute;
