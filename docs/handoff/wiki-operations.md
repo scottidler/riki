@@ -33,7 +33,7 @@ Run `/create-design-doc` for a NEW design doc, `docs/design/2026-10-02-riki-wiki
 - **Local only, not pushed:** `eed41cb` on `main` (Phase 7 results in the design doc and notes). This branch adds the research doc and this handoff on top.
 - **Theme branch:** `riki-theme` merged into `main` (PR https://github.com/scottidler/riki/pull/1, CI passed). Its worktree at `/home/saidler/repos/scottidler/riki-theme` is no longer needed.
 - **Home deploy (live):** systemd user unit `riki` on desk, `127.0.0.1:8737`, behind Caddy + Authelia at https://riki.escote.duckdns.org, content repo `scottidler/riki-content`. Probe: `systemctl --user is-active riki && curl -s 127.0.0.1:8737/status`.
-- **Test content repo:** `scottidler/riki-content-test` (private) still exists; delete it once Scott agrees.
+- **Test content repo:** `scottidler/riki-content-test` (private) stays. It is in active use for testing; never propose deleting it.
 
 ## Unverified / blocked (re-test before believing)
 
