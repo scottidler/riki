@@ -162,3 +162,50 @@
 }
 .riki-selection-menu[hidden] { display: none; }
 .riki-selection-menu button { display: block; padding: 0 0.625rem; text-align: left; white-space: nowrap; }
+
+/* The block handle lives in a left gutter the editor root reserves: the root reaches 3.5rem
+ * left of the text column, so the text stays where the article had it. On narrow screens,
+ * where the page has no margin to spare, the text moves right by the gutter instead. */
+.riki-editor-root { --riki-gutter: 3.5rem; margin-left: calc(-1 * var(--riki-gutter)); padding-left: var(--riki-gutter); }
+@media (max-width: 1023px) { .riki-editor-root { margin-left: 0; } }
+.riki-block-handle {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  gap: 1px;
+  transition: opacity 120ms;
+}
+.riki-block-handle[data-show="false"] { opacity: 0; pointer-events: none; }
+.riki-block-handle button, .riki-block-menu button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--riki-text-muted);
+  font: 500 0.8125rem/1 var(--riki-font);
+  cursor: pointer;
+}
+.riki-block-handle button { display: inline-grid; place-items: center; width: 1.5rem; height: 1.5rem; padding: 0; }
+.riki-block-handle [data-control="block-handle"] { cursor: grab; }
+.riki-block-handle svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.riki-block-handle [data-control="block-handle"] svg { stroke-width: 2.25; }
+.riki-block-handle button:hover, .riki-block-menu button:hover:not([disabled]) {
+  background-color: var(--riki-surface-strong);
+  color: var(--riki-text-strong);
+}
+.riki-block-menu {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.25rem;
+  border: 1px solid var(--riki-border);
+  border-radius: 12px;
+  background: var(--riki-bg-raised);
+  box-shadow: var(--riki-shadow-lg);
+}
+.riki-block-menu[hidden], .riki-block-submenu[hidden] { display: none; }
+.riki-block-menu button { display: block; height: 2rem; padding: 0 0.625rem; text-align: left; white-space: nowrap; }
+.riki-block-menu [disabled] { opacity: 0.45; cursor: default; }
+.riki-block-submenu { display: flex; flex-direction: column; margin: 0 0 0.25rem 0.75rem; padding-left: 0.25rem; border-left: 1px solid var(--riki-border); }
+.ProseMirror[data-dragging="true"] .ProseMirror-selectednode { opacity: 0.5; }

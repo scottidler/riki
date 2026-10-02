@@ -201,3 +201,22 @@
 - The bar mounts on the first editor update (the provider's behavior), not at editor creation: tests dispatch a selection before looking for it.
 ### Open questions
 - None.
+
+## Phase 12: Block handle
+### Design decisions
+- `editor/src/blockhandle.ts` holds the feature: Milkdown's `block` plugin (`@milkdown/kit/plugin/block`) with a `BlockProvider` view, configured by `configureBlockHandle` and registered in `makeEditor` (editor/src/setup.ts) right after the selection toolbar, so the fixture suite loads it. It adds no node, mark or schema change; all 66 canonical fixtures stay byte-identical.
+- The handle (`.riki-block-handle`) holds two buttons, `data-control="block-add"` (+) and `data-control="block-handle"` (⋮⋮). Drag is the plugin's own: the provider makes the handle element draggable, and the block service turns mousedown into a NodeSelection of the hovered block and dragstart into ProseMirror's `view.dragging` move, so ProseMirror's drop does the reorder. No drag code in riki.
+- The menu (`.riki-block-menu`: Turn into, Duplicate, Delete; `BLOCK_MENU`) is a sibling of the handle in the editor root, not inside it: the handle element is draggable and its mousedown re-selects the hovered block, which a click on a menu entry must not do. The hovered block (`{pos, node}`) is captured when the menu opens; every action first checks `blockIsCurrent` (the doc still holds that exact node at that position) and does nothing otherwise, and a doc change closes the menu.
+- Turn into reuses Phase 11's `TURN_INTO` entries: `turnBlockInto` sets a text selection spanning the block (`TextSelection.between` over its bounds), runs the same entry the selection toolbar runs, then collapses to a cursor so the selection toolbar does not pop up. It is disabled for blocks with no text of their own (divider, table) via `canTurnInto`.
+- `duplicateBlock` inserts the same node right after the block. `deleteBlock` removes it, widening to the parent while the block is its parent's only child (the only item of a list removes the list), so no empty container is left. `addBlockBelow` (the +) puts the cursor in a new empty paragraph below the block, or in the block itself when it is already an empty paragraph.
+- Gutter: `.riki-editor-root` reaches 3.5rem left of the text column (`margin-left: -3.5rem; padding-left: 3.5rem`), so the text sits where the article had it and the handle (placement `left-start`, 4px offset) falls inside the root. Below 1024px, where `.riki-main` pads only 16px, the negative margin is dropped and the text moves right by the gutter instead.
+- The handle hides and the menu closes whenever the view is not editable (guard failed, saving), checked in the plugin view's `update`.
+- Tests: vitest `test/blockhandle.test.ts` (10). jsdom has no layout, so the hover test stubs `posAtCoords` and `document.elementFromPoint` and dispatches a real `pointermove`, which drives the plugin's own show path and the menu through DOM clicks. Criterion: Duplicate on the second block of `other--mixed-page` and `blank-line-inserted--blocks-separated` serializes to the fixture with that block written twice. Also Delete, Turn into H2 on the whole block, Turn into disabled for divider/table, menu labels and Escape, + below, stale-block refusal, only-list-item delete, read-only hides the handle. Playwright `e2e/editor.spec.ts`: hovering "A canonical page." shows ⋮⋮ inside the root and left of the text column, level with the paragraph; Delete then Save writes `# Guide\n\n- one\n- two\n`. A second test drags ⋮⋮ onto the H1 and saves `A canonical page.\n\n# Guide\n\n- one\n- two\n` (native drag through Chromium). Bundles rebuilt and staged.
+### Deviations
+- The gutter + inserts an empty paragraph below and focuses it; it does not open the slash menu, which does not exist until Phase 13. Phase 13 adds the slash-menu open to `addBlockBelow`'s caller.
+### Tradeoffs
+- Menu entries as buttons with a nested Turn into list vs. a second floating submenu: one box, no second positioning pass, and the same mousedown-prevent pattern as the selection toolbar.
+- Capturing the block at menu-open time vs. reading the provider's live active block at click time: the pointer crosses other blocks on the way to the menu, which would retarget the action.
+- Deleting the parent of an only child vs. deleting just the node: ProseMirror would otherwise refill the list with an empty item, leaving a stray `-` in the saved file.
+### Open questions
+- None.

@@ -147,3 +147,46 @@ test('selecting text floats the selection toolbar; Turn into Heading 2 and bold 
   await expect(page.locator('.riki-editor')).toHaveCount(0)
   expect(riki.file('guide.md')).toContain('## **A canonical page.**')
 })
+
+test('hovering a paragraph shows the block handle in the left gutter; Delete from its menu removes the block from the saved file', async ({ page, riki }) => {
+  await page.goto(`${riki.url}/guide`)
+  await page.locator('#riki-edit').click()
+  await expect(editor(page)).toHaveAttribute('contenteditable', 'true')
+  const handle = page.locator('.riki-block-handle')
+  const paragraph = editor(page).getByText('A canonical page.')
+  await paragraph.hover()
+  await expect(handle).toHaveAttribute('data-show', 'true')
+  const grip = handle.locator('[data-control="block-handle"]')
+  await expect(grip).toBeVisible()
+
+  const root = (await page.locator('.riki-editor-root').boundingBox())!
+  const text = (await editor(page).boundingBox())!
+  const gripBox = (await grip.boundingBox())!
+  const para = (await paragraph.boundingBox())!
+  // Inside the editor root, left of the text column, level with the hovered paragraph.
+  expect(gripBox.x).toBeGreaterThanOrEqual(root.x)
+  expect(gripBox.x + gripBox.width).toBeLessThanOrEqual(text.x)
+  expect(gripBox.y).toBeLessThan(para.y + para.height)
+  expect(gripBox.y + gripBox.height).toBeGreaterThan(para.y)
+
+  await grip.click()
+  await page.locator('.riki-block-menu [data-control="block-delete"]').click()
+  await expect(editor(page)).not.toContainText('A canonical page.')
+  await control(page, 'save').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('guide.md')).toBe('# Guide\n\n- one\n- two\n')
+})
+
+test('dragging the block handle moves the block (native drag)', async ({ page, riki }) => {
+  await page.goto(`${riki.url}/guide`)
+  await page.locator('#riki-edit').click()
+  await expect(editor(page)).toHaveAttribute('contenteditable', 'true')
+  await editor(page).getByText('A canonical page.').hover()
+  const grip = page.locator('.riki-block-handle [data-control="block-handle"]')
+  await expect(grip).toBeVisible()
+  await grip.dragTo(editor(page).locator('h1'), { targetPosition: { x: 4, y: 2 } })
+  await expect(editor(page).locator('> *').first()).toHaveText('A canonical page.')
+  await control(page, 'save').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('guide.md')).toBe('A canonical page.\n\n# Guide\n\n- one\n- two\n')
+})

@@ -19,6 +19,7 @@ import { history } from '@milkdown/kit/plugin/history'
 import { $remark } from '@milkdown/kit/utils'
 import { visit } from 'unist-util-visit'
 import { alertHandler, alertPlugins } from './alert'
+import { blockHandle, configureBlockHandle } from './blockhandle'
 import { imageView } from './images'
 import { linkBoxPlugin } from './linkbox'
 import { configureSelectionToolbar, selectionToolbar } from './selectiontoolbar'
@@ -92,6 +93,8 @@ export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup
     .use(linkBoxPlugin(sourceFile))
     .config(configureSelectionToolbar(sourceFile))
     .use(selectionToolbar)
+    .config(configureBlockHandle)
+    .use(blockHandle)
     .config((ctx) => {
       ctx.update(blockContainerTypes.key, (prev) => [...prev, 'alert'])
     })
