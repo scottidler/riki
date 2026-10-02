@@ -19,6 +19,7 @@ import {
   toggleGroup,
   tocHeadings,
 } from './ui'
+import { isPaletteShortcut, openPalette } from './search'
 import { deleteDialog, menuIsOpen, moveDialog, newPageDialog, setMenuOpen } from './actions'
 
 const navigate = (url: string): void => window.location.assign(url)
@@ -76,6 +77,10 @@ document.addEventListener('click', (event) => {
     toggleGroup(toggle)
     return
   }
+  if (target?.closest('[data-riki-search]')) {
+    openPalette(navigate)
+    return
+  }
   const add = target?.closest<HTMLElement>('[data-riki-new]')
   if (add) {
     newPageDialog(add.dataset['rikiNew'] ?? '', navigate)
@@ -102,6 +107,11 @@ document.addEventListener('click', (event) => {
 })
 
 document.addEventListener('keydown', (event) => {
+  if (isPaletteShortcut(event)) {
+    event.preventDefault()
+    openPalette(navigate)
+    return
+  }
   if (event.key !== 'Escape') return
   if (menuIsOpen()) setMenuOpen(false)
   else if (document.body.classList.contains('riki-nav-open')) setNavOpen(document, false)

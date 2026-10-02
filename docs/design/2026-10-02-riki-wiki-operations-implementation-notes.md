@@ -148,3 +148,20 @@
 - `limit` above 50 is clamped rather than a 400: the doc states a max, not an error, and a palette asking for more still gets a useful answer.
 ### Open questions
 - None.
+
+## Phase 9: Search palette
+### Design decisions
+- The palette is `editor/src/page/search.ts`, in the page script (`riki.js`, no Milkdown). `openPalette(navigate, fetch)` builds a modal with a search input and a listbox, reusing the `riki-dialog-backdrop` / `riki-dialog` look. Pure helpers are exported and tested alone: `hitUrl` (`url#anchor`, plain `url` when `anchor` is null), `markedNodes(text, marks)`, `isPaletteShortcut(event)`, `fetchSearch`.
+- `markedNodes` slices the snippet with JS string indices (UTF-16 code units, the unit the route reports) and builds text nodes plus `<mark>` elements whose `textContent` is the slice. Titles, headings, paths and snippets are all set via `textContent` or text nodes; there is no `innerHTML` in the file. Marks that overlap, run backwards or fall outside the snippet are skipped rather than trusted.
+- Keys: the palette registers a capture-phase `keydown` on the document while open. Down/Up move (wrapping), Enter navigates to the selected hit's `url#anchor`, Esc closes. The first hit is selected as results arrive, so Enter alone opens the best hit and Down then Enter opens the second. Selection uses `aria-selected` and `aria-activedescendant`.
+- Query handling: 150ms debounce (`DEBOUNCE_MS`); a ticket counter drops responses that arrive after a newer query or after close; a blank query clears the list and sends nothing; a server error or an empty result shows a status line.
+- Shortcut: `main.ts` calls `isPaletteShortcut` (Ctrl or Cmd, plain K, event target not inside `.riki-editor-root` / `.ProseMirror`) and then `preventDefault()` and `openPalette`. Events from the editor are left untouched for the Phase 10 link box.
+- Header button: `server/templates/page.html` has a `data-riki-search` button (icon, "Search", "Ctrl K" hint) first in `.riki-header-end`; `main.ts` opens the palette from the delegated click. Styles in `editor/src/theme/riki.css`. Bundles rebuilt and staged.
+- Tests: vitest `test/search-palette.test.ts` (17: url and anchor, mark wrapping incl. emoji offset and hostile text, bad-range skipping, shortcut rules incl. editor target, fetch error mapping, Down+Enter to the second hit's `url#anchor`, Up wrap, Esc, field rendering, HTML in fields stays text, debounce to one request, blank query, server error, single instance and click); Playwright `e2e/search.spec.ts` (Ctrl+K, type, Enter lands on the hit URL with its anchor; header button and Esc; Ctrl+K inside the editor opens no palette).
+### Deviations
+- None.
+### Tradeoffs
+- The Playwright landing test types a body word (`pipe`) rather than `tabl`: Phase 8 gives a title-only match a snippet with no marks, so the page's top hit for `tabl` has nothing to highlight. A body match proves the marks, the heading anchor and the landing together.
+- Ctrl+K is handled on `keydown` at the document in the bubble phase, not capture: the editor's own handlers (Phase 10) see the key first, and `isPaletteShortcut` already stands down for editor targets. The palette's own keys use capture so a dialog opened over it cannot swallow them.
+### Open questions
+- None.

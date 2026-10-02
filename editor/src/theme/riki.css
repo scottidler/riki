@@ -378,6 +378,48 @@ body {
 .riki-deleted { display: flex; align-items: center; gap: 12px; }
 .riki-deleted p { margin: 0; }
 
+/* The header's search button and the Ctrl+K palette. */
+.riki-search-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--riki-border-strong);
+  border-radius: 8px;
+  background: var(--riki-bg-raised);
+  color: var(--riki-text-muted);
+  font: 400 13px/1 var(--riki-font);
+  cursor: pointer;
+}
+.riki-search-button:hover { background: var(--riki-surface); color: var(--riki-text-strong); }
+.riki-search-button svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.riki-search-button kbd { font: 500 11px/1 var(--riki-font); color: var(--riki-text-faint); }
+@media (max-width: 720px) { .riki-search-button span, .riki-search-button kbd { display: none; } }
+.riki-search { width: min(640px, calc(100vw - 32px)); padding: 12px; }
+.riki-search input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--riki-border-strong);
+  border-radius: 8px;
+  background: var(--riki-bg);
+  color: var(--riki-text-strong);
+  font: 400 15px/1 var(--riki-font);
+}
+.riki-search-status { margin: 10px 4px 0; }
+.riki-search-results { list-style: none; margin: 8px 0 0; padding: 0; }
+.riki-search-hit { display: block; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.riki-search-hit[aria-selected="true"] { background: var(--riki-accent-soft); }
+.riki-search-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.riki-search-title { color: var(--riki-text-strong); font-weight: 600; font-size: 14px; }
+.riki-search-heading { color: var(--riki-text); font-size: 13px; }
+.riki-search-heading::before { content: "# "; color: var(--riki-text-faint); }
+.riki-search-path { margin-left: auto; color: var(--riki-text-faint); font-size: 12px; }
+.riki-search-snippet { display: block; margin-top: 3px; color: var(--riki-text-muted); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.riki-search-snippet mark { background: var(--riki-accent-soft); color: var(--riki-text-strong); border-radius: 2px; font-weight: 600; }
+
 /* The narrow-screen bar under the top bar: drawer button, then "Section > Page". */
 .riki-trail {
   display: none;
