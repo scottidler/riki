@@ -149,7 +149,7 @@ create_formatter!(RikiFormatter<Vec<TocEntry>>, {
 });
 
 /// comrak configured per the design; link and image rewriting resolve against `source_file`.
-fn options(source_file: &str) -> Options<'static> {
+pub(crate) fn options(source_file: &str) -> Options<'static> {
     let mut options = Options::default();
     options.extension.table = true;
     options.extension.strikethrough = true;

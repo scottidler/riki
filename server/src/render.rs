@@ -1,7 +1,7 @@
 //! Pure HTML assembly for the shell: templates filled with already-rendered pieces. No axum, no
 //! IO; every value that reaches a template is escaped here or comes from comrak's safe mode.
 
-use riki_core::index::{PageNode, prettify};
+use riki_core::index::{PageNode, label, prettify};
 use riki_core::render::{RAW_PREFIX, TocEntry, encode_path, escape_html};
 use riki_core::wiki::{Rejected, Unreachable};
 use tracing::debug;
@@ -276,16 +276,6 @@ pub fn banners(rejected: Option<&Rejected>, unreachable: Option<&Unreachable>) -
         ));
     }
     out
-}
-
-/// The label a node shows: its page title (front matter `title`, else first H1; for a directory,
-/// its README's), else its prettified URL segment, else `Home` for the root.
-pub fn label(node: &PageNode, segment: &str) -> String {
-    match &node.title {
-        Some(title) => title.clone(),
-        None if node.url.is_empty() => "Home".to_string(),
-        None => prettify(segment),
-    }
 }
 
 /// One sidebar entry: a page link or a directory group. Built once, so the sidebar and the

@@ -254,3 +254,79 @@ async fn an_order_entry_naming_nothing_warns_once_and_publish_goes_on() {
     assert!(warns[0].contains("_order"), "{warns:?}");
     drop(logging);
 }
+
+#[tokio::test]
+async fn publish_builds_search_into_the_snapshot_and_a_poll_rebuilds_it() {
+    let fx = Fixture::new();
+    fx.push(&[
+        ("README.md", "# Home\n"),
+        (
+            "reference/tables.md",
+            "# Tables\n\n## Alignment\n\nColons align columns.\n",
+        ),
+    ]);
+    let wiki = Wiki::open(&fx.config()).await.expect("open");
+    wiki.poll().await.expect("poll");
+    let first = wiki.good().expect("published");
+    let hits = first.search.query("colon", 5);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, "reference/tables.md");
+    assert_eq!(hits[0].title, "Tables");
+    assert_eq!(hits[0].heading.as_deref(), Some("Alignment"));
+
+    fx.push(&[("reference/tables.md", "# Tables\n\n## Widths\n\nPipes size columns.\n")]);
+    wiki.poll().await.expect("poll");
+    let second = wiki.good().expect("published");
+    assert!(second.search.query("colon", 5).is_empty(), "old text gone");
+    assert_eq!(second.search.query("pipes", 5)[0].heading.as_deref(), Some("Widths"));
+    assert_eq!(
+        first.search.query("colon", 5).len(),
+        1,
+        "a held snapshot keeps its own search"
+    );
+}
+
+#[tokio::test]
+async fn the_first_publish_after_a_restart_has_search() {
+    let fx = Fixture::new();
+    fx.push(&[("README.md", "# Home\n\nzebra crossing\n")]);
+    let wiki = Wiki::open(&fx.config()).await.expect("open");
+    wiki.poll().await.expect("poll");
+    drop(wiki);
+    let restarted = Wiki::open(&fx.config()).await.expect("reopen");
+    let good = restarted.good().expect("published by open");
+    assert_eq!(good.search.query("zebra", 5)[0].url, "");
+}
+
+#[tokio::test]
+async fn an_unsearchable_page_warns_and_publish_goes_on() {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .with_ansi(false)
+        .finish();
+    let logging = tracing::subscriber::set_default(subscriber);
+    let fx = Fixture::new();
+    let tip = fx.push(&[
+        ("README.md", "# Home\n\nzebra\n"),
+        ("crlf.md", "# Crlf\r\n\r\nzebra\r\n"),
+    ]);
+    let wiki = Wiki::open(&fx.config()).await.expect("open");
+    wiki.poll().await.expect("poll");
+    let good = wiki.good().expect("published");
+    assert_eq!(good.commit(), tip);
+    let paths: Vec<String> = good.search.query("zebra", 5).into_iter().map(|hit| hit.path).collect();
+    assert_eq!(paths, ["README.md"]);
+    let warns: Vec<String> = logs
+        .text()
+        .lines()
+        .filter(|line| line.contains("WARN") && line.contains("crlf.md"))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(warns.len(), 1, "{}", logs.text());
+    assert!(warns[0].contains("carriage return"), "{warns:?}");
+    drop(logging);
+}

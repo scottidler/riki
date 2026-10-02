@@ -2,19 +2,21 @@
 //! **publish**, the only way the good tip moves.
 //!
 //! Publish builds the nav index for a commit. On success it builds the rest of the snapshot
-//! (redirects), writes the commit to `refs/riki/good`, and swaps the in-memory snapshot as a unit;
+//! (redirects, search), writes the commit to `refs/riki/good`, and swaps the in-memory snapshot as a unit;
 //! on failure it leaves both alone and records the error. Startup reads `refs/riki/good` (the tip
 //! on first run) and publishes it, so a restart never serves an invalid tip.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::time::Instant;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use git2::Oid;
 use tracing::{debug, info, warn};
 
-use crate::index::{ErrorList, NavIndex};
+use crate::index::{ErrorList, NavIndex, label};
 use crate::redirect::Redirects;
+use crate::search::{PageSource, SearchIndex};
 use crate::store::{GitStore, RepoGuard, StoreConfig, StoreError};
 
 /// Upstream has been unreachable since `since`; `error` is the latest fetch failure.
@@ -45,11 +47,13 @@ struct Health {
 }
 
 /// Everything served for the good tip, swapped as one unit by [`Wiki::publish`], so a request
-/// never mixes the nav of one commit with the redirects of another.
+/// never mixes the nav of one commit with the redirects or search of another. Page text lives only
+/// here (in `search`), never in the per-oid nav cache.
 #[derive(Debug)]
 pub struct Published {
     pub nav: Arc<NavIndex>,
     pub redirects: Redirects,
+    pub search: SearchIndex,
 }
 
 impl Published {
@@ -190,15 +194,62 @@ impl Wiki {
         }
         let previous = self.good();
         let redirects = Redirects::build(&self.store, previous.as_ref().map(|good| &good.redirects), commit).await?;
+        let search = self.search(&index).await?;
         self.store.set_good(guard, commit).await?;
         let published = Arc::new(Published {
             nav: index.clone(),
             redirects,
+            search,
         });
         *self.good.write().unwrap_or_else(PoisonError::into_inner) = Some(published);
         self.health().rejected = None;
         info!("publish: good tip is now {commit}");
         Ok(PublishOutcome::Published(index))
+    }
+
+    /// The search index for a publishable nav: every page's blob, read in one blocking task and
+    /// indexed in another. A page breaking a static rule is skipped with a WARN; store errors
+    /// propagate, so publish leaves the good tip alone.
+    async fn search(&self, nav: &NavIndex) -> Result<SearchIndex, StoreError> {
+        let started = Instant::now();
+        let commit = nav.commit();
+        let mut pages: std::collections::BTreeMap<String, (String, String)> = nav
+            .pages()
+            .map(|(url, file)| {
+                let segment = url.rsplit('/').next().unwrap_or_default();
+                let title = nav
+                    .node(url)
+                    .map_or_else(|| segment.to_string(), |node| label(node, segment));
+                (file.to_string(), (url.to_string(), title))
+            })
+            .collect();
+        let files = pages.keys().cloned().collect();
+        let blobs = self.store.read_blobs(commit, files).await?;
+        let sources: Vec<PageSource> = blobs
+            .into_iter()
+            .filter_map(|(path, bytes)| {
+                let (url, title) = pages.remove(&path)?;
+                Some(PageSource {
+                    path,
+                    url,
+                    title,
+                    bytes,
+                })
+            })
+            .collect();
+        let (search, skipped) = tokio::task::spawn_blocking(move || SearchIndex::build(sources)).await?;
+        for page in &skipped {
+            warn!("search: {commit}: {page}");
+        }
+        info!(
+            "search: built for {commit}: pages={} sections={} terms={} skipped={} in {:?}",
+            search.page_count(),
+            search.section_count(),
+            search.term_count(),
+            skipped.len(),
+            started.elapsed()
+        );
+        Ok(search)
     }
 
     /// Fetch upstream and record the result in the health state `/status` and the banner read: a

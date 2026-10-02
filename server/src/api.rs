@@ -1,6 +1,7 @@
 //! The page API: `GET /_riki/api/page` (the editor's view of a page), `POST /_riki/api/page`
 //! (save), `POST /_riki/api/roundtrip` (the round-trip guard's comparison), and the path ops
-//! `POST /_riki/api/move`, `POST /_riki/api/delete`, and `POST /_riki/api/restore` (`ops`).
+//! `POST /_riki/api/move`, `POST /_riki/api/delete`, and `POST /_riki/api/restore` (`ops`), and
+//! the read-only `GET /_riki/api/tree`, `GET /_riki/api/new-page`, and `GET /_riki/api/search`.
 //!
 //! Every POST route sits behind the JSON-only guard: a cross-origin JSON POST needs a CORS
 //! preflight riki never answers, so requiring `application/json` blocks form-based CSRF. The save
@@ -14,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use riki_core::Oid;
-use riki_core::index::url_for_file;
+use riki_core::index::{label, url_for_file};
 use riki_core::page::{self, StaticRule};
 use riki_core::save::{self, SaveOutcome, SaveRequest};
 use riki_core::slug;
@@ -29,6 +30,9 @@ const PAGE: &str = "/_riki/api/page";
 const ROUNDTRIP: &str = "/_riki/api/roundtrip";
 const TREE: &str = "/_riki/api/tree";
 const NEW_PAGE: &str = "/_riki/api/new-page";
+const SEARCH: &str = "/_riki/api/search";
+const SEARCH_LIMIT_DEFAULT: usize = 20;
+const SEARCH_LIMIT_MAX: usize = 50;
 
 pub fn router() -> Router<AppState> {
     let posts = Router::new()
@@ -42,6 +46,7 @@ pub fn router() -> Router<AppState> {
         .route(PAGE, get(load))
         .route(TREE, get(tree))
         .route(NEW_PAGE, get(new_page))
+        .route(SEARCH, get(search))
         .merge(posts)
 }
 
@@ -185,7 +190,7 @@ async fn tree(State(state): State<AppState>) -> Response {
         let segment = url.rsplit('/').next().unwrap_or_default();
         let title = nav
             .node(url)
-            .map_or_else(|| segment.to_string(), |node| crate::render::label(node, segment));
+            .map_or_else(|| segment.to_string(), |node| label(node, segment));
         pages.push(TreePage {
             path: file.to_string(),
             url: format!("/{url}"),
@@ -235,6 +240,59 @@ async fn new_page(State(state): State<AppState>, query: Result<Query<NewPageQuer
         url: format!("/{url}"),
     })
     .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: String,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchHit {
+    path: String,
+    url: String,
+    title: String,
+    heading: Option<String>,
+    anchor: Option<String>,
+    snippet: String,
+    marks: Vec<[usize; 2]>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchBody {
+    hits: Vec<SearchHit>,
+}
+
+/// Full-text search over the good tip's snapshot: every term prefix-matched, one hit per page.
+/// `limit` defaults to 20 and is capped at 50; `marks` are UTF-16 ranges into `snippet`.
+async fn search(State(state): State<AppState>, query: Result<Query<SearchQuery>, QueryRejection>) -> Response {
+    let Ok(Query(SearchQuery { q, limit })) = query else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "missing `q` query parameter, or `limit` is not a non-negative integer",
+        );
+    };
+    let Some(published) = state.wiki.good() else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "no published version yet");
+    };
+    let limit = limit.unwrap_or(SEARCH_LIMIT_DEFAULT).min(SEARCH_LIMIT_MAX);
+    let hits: Vec<SearchHit> = published
+        .search
+        .query(&q, limit)
+        .into_iter()
+        .map(|hit| SearchHit {
+            path: hit.path,
+            url: format!("/{}", hit.url),
+            title: hit.title,
+            heading: hit.heading,
+            anchor: hit.anchor,
+            snippet: hit.snippet,
+            marks: hit.marks,
+        })
+        .collect();
+    debug!("search: q={q:?} limit={limit} hits={}", hits.len());
+    Json(SearchBody { hits }).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -424,6 +482,8 @@ mod ops;
 mod ops_tests;
 #[cfg(test)]
 mod save_tests;
+#[cfg(test)]
+mod search_tests;
 #[cfg(test)]
 mod tests;
 

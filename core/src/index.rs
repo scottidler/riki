@@ -284,6 +284,16 @@ pub fn prettify(name: &str) -> String {
     }
 }
 
+/// The label a node shows: its page title (front matter `title`, else first H1; for a directory,
+/// its README's), else its prettified URL segment, else `Home` for the root.
+pub fn label(node: &PageNode, segment: &str) -> String {
+    match &node.title {
+        Some(title) => title.clone(),
+        None if node.url.is_empty() => "Home".to_string(),
+        None => prettify(segment),
+    }
+}
+
 fn is_hidden(raw: &[u8]) -> bool {
     raw.split(|b| *b == b'/').any(|segment| segment.first() == Some(&b'.'))
 }
@@ -316,6 +326,42 @@ mod tests {
 
     fn oid() -> Oid {
         Oid::ZERO_SHA1
+    }
+
+    /// Search text lives only in the published snapshot (`wiki::Published::search`): the nav is
+    /// cached per oid and never evicted. Adding a field to `NavIndex` breaks this destructure, so
+    /// a text field cannot slip in unreviewed.
+    #[test]
+    fn nav_index_has_no_text_field() {
+        let NavIndex {
+            commit: _,
+            pages: _,
+            tree: _,
+            errors: _,
+        } = NavIndex::build(oid(), ["a.md"]);
+        let PageNode {
+            url: _,
+            file: _,
+            title: _,
+            children: _,
+            order: _,
+        } = PageNode::default();
+    }
+
+    #[test]
+    fn label_is_the_title_else_the_prettified_segment_else_home() {
+        let titled = PageNode {
+            title: Some("Guide".to_string()),
+            url: "g".to_string(),
+            ..PageNode::default()
+        };
+        assert_eq!(label(&titled, "g"), "Guide");
+        let untitled = PageNode {
+            url: "getting-started".to_string(),
+            ..PageNode::default()
+        };
+        assert_eq!(label(&untitled, "getting-started"), "Getting started");
+        assert_eq!(label(&PageNode::default(), ""), "Home");
     }
 
     #[test]

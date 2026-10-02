@@ -4,7 +4,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use riki_core::index::{PageNode, RESERVED, prettify, url_for_file};
+use riki_core::index::{PageNode, RESERVED, label, prettify, url_for_file};
 use riki_core::render::{encode_path, render_markdown};
 use serde::Deserialize;
 use tracing::{debug, error, warn};
@@ -134,7 +134,7 @@ async fn page_at(state: &AppState, raw_path: &str, query: &PageQuery) -> Respons
     };
     let title = index.node(path).map_or_else(
         || last_segment(path),
-        |node| render::label(node, path.rsplit('/').next().unwrap_or(path)),
+        |node| label(node, path.rsplit('/').next().unwrap_or(path)),
     );
     html_response(
         StatusCode::OK,

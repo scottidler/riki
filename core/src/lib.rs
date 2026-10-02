@@ -9,6 +9,7 @@ pub mod redirect;
 pub mod render;
 pub mod runtime;
 pub mod save;
+pub mod search;
 pub mod slug;
 pub mod store;
 pub mod wiki;
