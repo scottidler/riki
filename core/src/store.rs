@@ -88,6 +88,14 @@ impl TreeOp {
     }
 }
 
+/// What an op check needs to know about a commit it was handed by a client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitInfo {
+    pub parents: Vec<Oid>,
+    /// The first line of the message, lossily decoded.
+    pub summary: String,
+}
+
 /// What a push that git completed did. A timeout is `StoreError::Timeout`; any other failure
 /// (transport, auth, a remote-side rejection such as a protected branch) is `StoreError::Failed`
 /// carrying git's stderr.
@@ -306,6 +314,52 @@ impl GitStore {
             Ok(Some((entry.id(), repo.find_blob(entry.id())?.content().to_vec())))
         })
         .await
+    }
+
+    /// The oid of whatever `commit`'s tree holds at `path` (a file, a directory, or a submodule),
+    /// or `None` when nothing is there. This is "present" / "absent" for op checks: unlike
+    /// [`Self::blob_at`], a directory counts as present. The path is validated first.
+    pub async fn entry_at(&self, commit: Oid, path: &str) -> Result<Option<Oid>, StoreError> {
+        path::validate(path)?;
+        let path = path.to_string();
+        self.blocking(move |repo| {
+            let tree = repo.find_commit(commit)?.tree()?;
+            match tree.get_path(Path::new(&path)) {
+                Ok(entry) => Ok(Some(entry.id())),
+                Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
+                Err(err) => Err(err.into()),
+            }
+        })
+        .await
+    }
+
+    /// The parents and summary of commit `oid`, or `None` when the object DB has no commit with
+    /// that id (absent, or another kind of object).
+    pub async fn commit_info(&self, oid: Oid) -> Result<Option<CommitInfo>, StoreError> {
+        self.blocking(move |repo| {
+            let object = match repo.find_object(oid, None) {
+                Ok(object) => object,
+                Err(err) if err.code() == ErrorCode::NotFound => return Ok(None),
+                Err(err) => return Err(err.into()),
+            };
+            let Ok(commit) = object.into_commit() else {
+                return Ok(None);
+            };
+            Ok(Some(CommitInfo {
+                parents: commit.parent_ids().collect(),
+                summary: String::from_utf8_lossy(commit.summary_bytes().unwrap_or_default()).into_owned(),
+            }))
+        })
+        .await
+    }
+
+    /// Whether `ancestor` is `commit` itself or reachable from it through parents.
+    pub async fn reaches(&self, commit: Oid, ancestor: Oid) -> Result<bool, StoreError> {
+        if commit == ancestor {
+            return Ok(true);
+        }
+        self.blocking(move |repo| Ok(repo.graph_descendant_of(commit, ancestor)?))
+            .await
     }
 
     /// The blobs at `files` in `commit`, in one blocking task, as `(file, bytes)`. Files that are

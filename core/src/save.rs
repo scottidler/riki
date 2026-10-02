@@ -153,13 +153,7 @@ impl WriteOp for Edit<'_> {
 
 /// The user's one-line message, or `riki: edit <path>` when absent or blank.
 fn commit_message(request: &SaveRequest) -> Result<String, String> {
-    match request.message.as_deref().map(str::trim) {
-        Some(message) if message.contains('\n') || message.contains('\r') => {
-            Err("message must be one line".to_string())
-        }
-        Some(message) if !message.is_empty() => Ok(message.to_string()),
-        _ => Ok(format!("riki: edit {}", request.path)),
-    }
+    write::one_line_message(request.message.as_deref(), || format!("riki: edit {}", request.path))
 }
 
 /// The body of a stored page, front matter stripped, for a 409. A blob that breaks a static rule

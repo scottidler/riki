@@ -484,3 +484,53 @@ fn count_objects(dir: &Path) -> usize {
     }
     walk(&dir.join("objects"))
 }
+
+#[tokio::test]
+async fn entry_at_counts_a_directory_as_present() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n"), ("a/b.md/c.md", "deep\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let (blob, _) = store.blob_at(seed, "README.md").await.expect("read").expect("present");
+    assert_eq!(store.entry_at(seed, "README.md").await.expect("read"), Some(blob));
+    assert_eq!(store.blob_at(seed, "a/b.md").await.expect("read"), None, "not a blob");
+    assert!(
+        store.entry_at(seed, "a/b.md").await.expect("read").is_some(),
+        "a tree is present"
+    );
+    assert_eq!(store.entry_at(seed, "nope.md").await.expect("read"), None);
+    let bad = store.entry_at(seed, "../x.md").await;
+    assert!(matches!(bad, Err(StoreError::Path(_))), "{bad:?}");
+}
+
+#[tokio::test]
+async fn commit_info_and_reaches_read_the_history() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n")], "seed");
+    let next = commit_files(&up, BRANCH, &[("a.md", "a\n")], "add a\n\nbody line");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let info = store.commit_info(next).await.expect("read").expect("a commit");
+    assert_eq!(info.parents, vec![seed]);
+    assert_eq!(info.summary, "add a");
+    assert_eq!(
+        store.commit_info(seed).await.expect("read").expect("a commit").parents,
+        vec![]
+    );
+    let (blob, _) = store.blob_at(seed, "README.md").await.expect("read").expect("present");
+    assert_eq!(
+        store.commit_info(blob).await.expect("read"),
+        None,
+        "a blob is not a commit"
+    );
+    let missing = Oid::from_str("0000000000000000000000000000000000000001").expect("oid");
+    assert_eq!(store.commit_info(missing).await.expect("read"), None);
+    assert!(
+        store.reaches(next, next).await.expect("walk"),
+        "a commit reaches itself"
+    );
+    assert!(store.reaches(next, seed).await.expect("walk"));
+    assert!(!store.reaches(seed, next).await.expect("walk"), "never forward");
+}

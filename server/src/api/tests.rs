@@ -25,6 +25,13 @@ async fn post(path: &str, content_type: Option<&str>, email: Option<&str>) -> St
         .status()
 }
 
+const POST_ROUTES: [&str; 4] = [
+    "/_riki/api/page",
+    "/_riki/api/roundtrip",
+    "/_riki/api/delete",
+    "/_riki/api/restore",
+];
+
 #[tokio::test]
 async fn save_without_the_email_header_is_401() {
     let code = post("/_riki/api/page", Some("application/json"), None).await;
@@ -43,9 +50,17 @@ async fn save_with_the_email_header_passes_the_guards() {
 
 #[tokio::test]
 async fn form_encoded_post_is_415_on_every_post_route() {
-    for path in ["/_riki/api/page", "/_riki/api/roundtrip"] {
+    for path in POST_ROUTES {
         let code = post(path, Some("application/x-www-form-urlencoded"), Some("a@x.com")).await;
         assert_eq!(code, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn delete_and_restore_without_the_email_header_are_401() {
+    for path in ["/_riki/api/delete", "/_riki/api/restore"] {
+        let code = post(path, Some("application/json"), None).await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "{path}");
     }
 }
 
@@ -57,7 +72,7 @@ async fn missing_content_type_is_415() {
 
 #[tokio::test]
 async fn json_with_charset_parameter_is_accepted() {
-    for path in ["/_riki/api/page", "/_riki/api/roundtrip"] {
+    for path in POST_ROUTES {
         let code = post(path, Some("application/json; charset=utf-8"), Some("a@x.com")).await;
         assert_eq!(
             code,

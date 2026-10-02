@@ -1,5 +1,6 @@
 //! The page API: `GET /_riki/api/page` (the editor's view of a page), `POST /_riki/api/page`
-//! (save), and `POST /_riki/api/roundtrip` (the round-trip guard's comparison).
+//! (save), `POST /_riki/api/roundtrip` (the round-trip guard's comparison), and the path ops
+//! `POST /_riki/api/delete` and `POST /_riki/api/restore` (`ops`).
 //!
 //! Every POST route sits behind the JSON-only guard: a cross-origin JSON POST needs a CORS
 //! preflight riki never answers, so requiring `application/json` blocks form-based CSRF. The save
@@ -29,6 +30,8 @@ pub fn router() -> Router<AppState> {
     let posts = Router::new()
         .route(PAGE, post(save))
         .route(ROUNDTRIP, post(roundtrip))
+        .route(ops::DELETE, post(ops::delete))
+        .route(ops::RESTORE, post(ops::restore))
         .route_layer(middleware::from_fn(require_json));
     Router::new().route(PAGE, get(load)).merge(posts)
 }
@@ -77,10 +80,10 @@ fn internal(context: &str, err: impl std::fmt::Display) -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, format!("{context}: {err}"))
 }
 
-/// Parse a `base-oid`; the error is the 400 message.
-fn parse_oid(text: &str) -> Result<Oid, String> {
+/// Parse the oid in request field `field`; the error is the 400 message.
+fn parse_oid(field: &str, text: &str) -> Result<Oid, String> {
     text.parse::<Oid>()
-        .map_err(|_| format!("base-oid {text:?} is not an object id"))
+        .map_err(|_| format!("{field} {text:?} is not an object id"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,7 +182,12 @@ async fn save(
         Ok(body) => body,
         Err(rejection) => return error(StatusCode::BAD_REQUEST, rejection.body_text()),
     };
-    let base_oid = match body.base_oid.as_deref().map(parse_oid).transpose() {
+    let base_oid = match body
+        .base_oid
+        .as_deref()
+        .map(|oid| parse_oid("base-oid", oid))
+        .transpose()
+    {
         Ok(oid) => oid,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
@@ -220,29 +228,49 @@ fn save_response(outcome: SaveOutcome) -> Response {
             };
             (StatusCode::CONFLICT, Json(body)).into_response()
         }
-        SaveOutcome::IndexConflict { errors } => {
-            error(StatusCode::CONFLICT, format!("the save would break the wiki: {errors}"))
-        }
-        SaveOutcome::RetriesExhausted { attempts, line } => error(
-            StatusCode::CONFLICT,
-            format!("upstream kept moving: push rejected {attempts} times ({line})"),
-        ),
+        SaveOutcome::IndexConflict { errors } => index_conflict("save", &errors),
+        SaveOutcome::RetriesExhausted { attempts, line } => retries_exhausted(attempts, &line),
         SaveOutcome::BadRequest(message) => error(StatusCode::BAD_REQUEST, message),
         SaveOutcome::NotEditable(rule) => not_editable(rule),
-        SaveOutcome::FetchFailed(message) => error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("upstream unreachable: {message}"),
-        ),
-        SaveOutcome::NoTip => error(StatusCode::SERVICE_UNAVAILABLE, "upstream has no commit on the branch"),
-        SaveOutcome::PushTimedOut(message) => {
-            let body = ErrorBody {
-                error: format!("push outcome unknown: {message}"),
-                retry_safe: Some(true),
-            };
-            (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-        }
+        SaveOutcome::FetchFailed(message) => fetch_failed(&message),
+        SaveOutcome::NoTip => no_tip(),
+        SaveOutcome::PushTimedOut(message) => push_timed_out(&message),
         SaveOutcome::PushFailed(stderr) => error(StatusCode::BAD_GATEWAY, stderr),
     }
+}
+
+// The write driver's endings, shared by save and every path op (design doc, API Design status
+// mapping): 409 for the index and retry conflicts, plain 503 for fetch failures, 503
+// `retry-safe` only when a push timed out.
+
+fn index_conflict(op: &str, errors: &str) -> Response {
+    error(StatusCode::CONFLICT, format!("the {op} would break the wiki: {errors}"))
+}
+
+fn retries_exhausted(attempts: u32, line: &str) -> Response {
+    error(
+        StatusCode::CONFLICT,
+        format!("upstream kept moving: push rejected {attempts} times ({line})"),
+    )
+}
+
+fn fetch_failed(message: &str) -> Response {
+    error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("upstream unreachable: {message}"),
+    )
+}
+
+fn no_tip() -> Response {
+    error(StatusCode::SERVICE_UNAVAILABLE, "upstream has no commit on the branch")
+}
+
+fn push_timed_out(message: &str) -> Response {
+    let body = ErrorBody {
+        error: format!("push outcome unknown: {message}"),
+        retry_safe: Some(true),
+    };
+    (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
 }
 
 fn not_editable(rule: StaticRule) -> Response {
@@ -274,7 +302,7 @@ async fn roundtrip(State(state): State<AppState>, body: Result<Json<RoundtripBod
         Ok(body) => body,
         Err(rejection) => return error(StatusCode::BAD_REQUEST, rejection.body_text()),
     };
-    let oid = match parse_oid(&body.base_oid) {
+    let oid = match parse_oid("base-oid", &body.base_oid) {
         Ok(oid) => oid,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
@@ -300,6 +328,10 @@ async fn roundtrip(State(state): State<AppState>, body: Result<Json<RoundtripBod
     .into_response()
 }
 
+mod ops;
+
+#[cfg(test)]
+mod ops_tests;
 #[cfg(test)]
 mod save_tests;
 #[cfg(test)]

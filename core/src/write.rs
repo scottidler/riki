@@ -70,6 +70,29 @@ pub enum WriteOutcome<T> {
     PushFailed(String),
 }
 
+/// What a path op (delete, restore, move) answers when it makes no commit of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpAnswer {
+    /// The tip already holds the op's result (a retried or concurrent op got there first); the
+    /// tip was published before this answer.
+    ContentPresent,
+    /// The tip moved under the client; the message says how.
+    Conflict(String),
+    /// The request can never succeed as sent: a bad path, a guard, an unrecognized commit.
+    BadRequest(String),
+}
+
+/// The user's one-line commit message, or `default` when absent or blank.
+pub fn one_line_message(message: Option<&str>, default: impl FnOnce() -> String) -> Result<String, String> {
+    match message.map(str::trim) {
+        Some(message) if message.contains('\n') || message.contains('\r') => {
+            Err("message must be one line".to_string())
+        }
+        Some(message) if !message.is_empty() => Ok(message.to_string()),
+        _ => Ok(default()),
+    }
+}
+
 /// Run `op` authored by `author`: fetch, check-and-build, validate, push, retry on
 /// non-fast-forward, publish, all under one hold of the repo mutex.
 pub async fn run<O: WriteOp>(
