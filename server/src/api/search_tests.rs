@@ -124,3 +124,13 @@ async fn a_missing_query_or_a_bad_limit_is_400_and_nothing_published_is_503() {
     let (status, _) = get(&app, "/_riki/api/search?q=x").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn hit_urls_are_percent_encoded_like_the_sidebar() {
+    let upstream = Upstream::new();
+    upstream.push(&[("README.md", "# Home\n"), ("docs/a#b.md", "# Hash\n\nzebra\n")]);
+    let (app, _) = served(&upstream).await;
+    let (status, body) = get(&app, "/_riki/api/search?q=zebra").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["hits"][0]["url"], "/docs/a%23b", "{body}");
+}

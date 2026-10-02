@@ -29,6 +29,12 @@ fn links_map_md_files_to_riki_urls() {
 }
 
 #[test]
+fn an_encoded_link_keeps_its_encoding_so_it_reaches_the_page() {
+    assert_eq!(rewrite_link("README.md", "docs/a%23b.md"), "/docs/a%23b");
+    assert_eq!(rewrite_link("a/b.md", "../c/why%3F.md#top"), "/c/why%3F#top");
+}
+
+#[test]
 fn absolute_external_and_anchor_links_pass_through() {
     for url in [
         "https://example.com/x.md",

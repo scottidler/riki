@@ -16,7 +16,9 @@ use riki_core::write::{OpAnswer, WriteOutcome};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use super::{error, fetch_failed, index_conflict, internal, no_tip, parse_oid, push_timed_out, retries_exhausted};
+use super::{
+    error, fetch_failed, href, index_conflict, internal, no_tip, parse_oid, push_timed_out, retries_exhausted,
+};
 use crate::identity::Identity;
 use crate::routes::AppState;
 
@@ -158,7 +160,7 @@ pub(super) async fn restore(
 
 /// The URL the page `file` is served at, with its leading `/`.
 fn page_url(file: &str) -> Option<String> {
-    url_for_file(file).map(|url| format!("/{url}"))
+    url_for_file(file).as_deref().map(href)
 }
 
 /// One `match` from a path op's outcome to HTTP. `url` rides on every 200.

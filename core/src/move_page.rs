@@ -79,11 +79,6 @@ fn twin(file: &str) -> Option<String> {
     }
 }
 
-/// Every proper directory prefix of `file`: `a/b/c.md` -> `a`, `a/b`.
-fn ancestors(file: &str) -> impl Iterator<Item = &str> {
-    file.match_indices('/').map(|(at, _)| &file[..at])
-}
-
 struct Move<'a> {
     request: &'a MoveRequest,
     message: String,
@@ -94,10 +89,8 @@ impl Move<'_> {
     /// where one of its folders would go, or its URL already served by its twin.
     async fn blocked(&self, at: &Fetched<'_>) -> Result<Option<String>, StoreError> {
         let MoveRequest { from, to, .. } = self.request;
-        for dir in ancestors(to) {
-            if at.store.blob_at(at.tip, dir).await?.is_some() {
-                return Ok(Some(format!("{dir} is a file, so {to} cannot be created")));
-            }
+        if let Some(dir) = at.file_ancestor(to).await? {
+            return Ok(Some(format!("{dir} is a file, so {to} cannot be created")));
         }
         if let Some(twin) = twin(to).filter(|twin| twin != from)
             && at.store.entry_at(at.tip, &twin).await?.is_some()

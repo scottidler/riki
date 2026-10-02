@@ -255,6 +255,20 @@ async fn restore_where_a_directory_now_sits_is_a_conflict() {
 }
 
 #[tokio::test]
+async fn restore_under_a_file_that_took_a_folder_name_is_a_conflict() {
+    let fx = Fixture::new(&[("README.md", "# home\n"), ("a/x.md", "# X\n")]);
+    let wiki = fx.wiki().await;
+    let d = delete_page(&wiki, "a/x.md").await;
+    let laptop = commit_files(&fx.upstream, BRANCH, &[("a", "not a folder\n")], "file a");
+    let outcome = restore_page(&wiki, "a/x.md", d).await;
+    let WriteOutcome::Op(OpAnswer::Conflict(reason)) = &outcome else {
+        panic!("expected a conflict, got {outcome:?}");
+    };
+    assert!(reason.contains("a is a file"), "{reason}");
+    assert_eq!(head(&fx.upstream, BRANCH), Some(laptop), "nothing pushed");
+}
+
+#[tokio::test]
 async fn restore_of_an_older_delete_behind_later_commits_works() {
     let fx = Fixture::new(&[("README.md", "# home\n"), ("x.md", "# X\n")]);
     let wiki = fx.wiki().await;

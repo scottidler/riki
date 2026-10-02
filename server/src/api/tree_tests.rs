@@ -92,3 +92,40 @@ async fn new_page_refuses_an_invalid_folder_and_a_missing_title() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
     }
 }
+
+#[tokio::test]
+async fn tree_urls_are_percent_encoded_like_the_sidebar() {
+    let upstream = Upstream::new();
+    upstream.push(&[
+        ("README.md", "# Home\n"),
+        ("docs/a#b.md", "# Hash\n"),
+        ("docs/why?.md", "# Why\n"),
+        ("docs/two words.md", "# Two\n"),
+    ]);
+    let wiki = upstream.replica("r", std::time::Duration::from_secs(30)).await;
+    let app = router(AppState::new(Arc::new(Runtime::new()), wiki));
+    let (status, body) = get(&app, "/_riki/api/tree").await;
+    assert_eq!(status, StatusCode::OK);
+    let pages = body["pages"].as_array().expect("pages");
+    let url = |path: &str| pages.iter().find(|p| p["path"] == path).expect(path)["url"].clone();
+    assert_eq!(url("docs/a#b.md"), "/docs/a%23b");
+    assert_eq!(url("docs/why?.md"), "/docs/why%3F");
+    assert_eq!(url("docs/two words.md"), "/docs/two%20words");
+    let response = app
+        .clone()
+        .oneshot(Request::get("/docs/a%23b").body(Body::empty()).expect("request"))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK, "the encoded url serves the page");
+}
+
+#[tokio::test]
+async fn new_page_url_is_percent_encoded() {
+    let upstream = Upstream::new();
+    upstream.push(&[("README.md", "# Home\n"), ("two words/README.md", "# Two\n")]);
+    let wiki = upstream.replica("r", std::time::Duration::from_secs(30)).await;
+    let app = router(AppState::new(Arc::new(Runtime::new()), wiki));
+    let (status, body) = get(&app, "/_riki/api/new-page?folder=two%20words&title=Fresh").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"path": "two words/fresh.md", "url": "/two%20words/fresh"}));
+}

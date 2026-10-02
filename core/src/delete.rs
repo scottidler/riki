@@ -156,6 +156,12 @@ impl WriteOp for Restore<'_> {
         };
         match at.store.entry_at(at.tip, path).await? {
             None => {
+                if let Some(dir) = at.file_ancestor(path).await? {
+                    info!("restore: {dir} is a file at {}, conflict", at.tip);
+                    return Ok(Check::Conflict(OpAnswer::Conflict(format!(
+                        "{dir} is a file, so {path} cannot be restored"
+                    ))));
+                }
                 let ops = [TreeOp::Upsert {
                     path: path.clone(),
                     blob: deleted.blob,

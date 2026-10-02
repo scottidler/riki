@@ -273,3 +273,9 @@ async fn a_failed_fetch_commits_nothing() {
     assert!(matches!(outcome, WriteOutcome::FetchFailed(_)), "{outcome:?}");
     assert_eq!(op.calls.load(Ordering::SeqCst), 0, "no check without a fresh tip");
 }
+
+#[test]
+fn ancestors_are_every_folder_prefix() {
+    assert_eq!(ancestors("a/b/c.md").collect::<Vec<_>>(), ["a", "a/b"]);
+    assert_eq!(ancestors("c.md").count(), 0);
+}

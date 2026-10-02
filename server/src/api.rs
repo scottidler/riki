@@ -17,6 +17,7 @@ use axum::{Json, Router};
 use riki_core::Oid;
 use riki_core::index::{label, url_for_file};
 use riki_core::page::{self, StaticRule};
+use riki_core::render::encode_path;
 use riki_core::save::{self, SaveOutcome, SaveRequest};
 use riki_core::slug;
 use riki_core::store::Signer;
@@ -25,6 +26,12 @@ use tracing::{debug, error, info};
 
 use crate::identity::Identity;
 use crate::routes::AppState;
+
+/// A page URL as JSON hands it to the browser: `/` plus the percent-encoded path, the same
+/// encoding as the sidebar's hrefs, so `docs/a#b.md` navigates to the page, not a fragment.
+fn href(url: &str) -> String {
+    format!("/{}", encode_path(url))
+}
 
 const PAGE: &str = "/_riki/api/page";
 const ROUNDTRIP: &str = "/_riki/api/roundtrip";
@@ -193,7 +200,7 @@ async fn tree(State(state): State<AppState>) -> Response {
             .map_or_else(|| segment.to_string(), |node| label(node, segment));
         pages.push(TreePage {
             path: file.to_string(),
-            url: format!("/{url}"),
+            url: href(url),
             title,
         });
     }
@@ -235,11 +242,7 @@ async fn new_page(State(state): State<AppState>, query: Result<Query<NewPageQuer
         return internal("deriving the url", &path);
     };
     debug!("new_page: folder={folder:?} title={title:?} path={path}");
-    Json(NewPageBody {
-        path,
-        url: format!("/{url}"),
-    })
-    .into_response()
+    Json(NewPageBody { path, url: href(&url) }).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,7 +286,7 @@ async fn search(State(state): State<AppState>, query: Result<Query<SearchQuery>,
         .into_iter()
         .map(|hit| SearchHit {
             path: hit.path,
-            url: format!("/{}", hit.url),
+            url: href(&hit.url),
             title: hit.title,
             heading: hit.heading,
             anchor: hit.anchor,

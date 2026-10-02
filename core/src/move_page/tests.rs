@@ -263,9 +263,3 @@ fn twins_are_the_two_files_of_one_url() {
     assert_eq!(twin("top.md").as_deref(), Some("top/README.md"));
     assert_eq!(twin("README.md"), None);
 }
-
-#[test]
-fn ancestors_are_every_folder_prefix() {
-    assert_eq!(ancestors("a/b/c.md").collect::<Vec<_>>(), ["a", "a/b"]);
-    assert_eq!(ancestors("c.md").count(), 0);
-}

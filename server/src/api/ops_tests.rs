@@ -438,3 +438,38 @@ async fn bad_moves_are_400_and_commit_nothing() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "missing to");
     assert_eq!(history_len(&upstream.dir, BRANCH), 1);
 }
+
+#[tokio::test]
+async fn move_and_restore_urls_are_percent_encoded() {
+    let upstream = seeded();
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let base = base_oid(&app, "guide.md").await;
+    let (status, reply) = move_page(&app, "guide.md", &base, "docs/a#b.md").await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(reply["url"], "/docs/a%23b");
+
+    let base = base_oid(&app, "docs/a%23b.md").await;
+    let (status, reply) = delete(&app, "docs/a#b.md", &base).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let d = reply["commit"].as_str().expect("a commit").to_string();
+    let (status, reply) = restore(&app, "docs/a#b.md", &d).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(reply["url"], "/docs/a%23b");
+}
+
+#[tokio::test]
+async fn restore_under_a_file_that_took_a_folder_name_is_a_409() {
+    let upstream = Upstream::new();
+    upstream.push(&[("README.md", "# home\n"), ("a/x.md", PAGE)]);
+    let wiki = upstream.replica("r", TIMEOUT).await;
+    let app = app(&wiki);
+    let base = base_oid(&app, "a/x.md").await;
+    let (status, reply) = delete(&app, "a/x.md", &base).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let d = reply["commit"].as_str().expect("a commit").to_string();
+    let laptop = upstream.push(&[("a", "not a folder\n")]);
+    let (status, reply) = restore(&app, "a/x.md", &d).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{reply}");
+    assert_eq!(head(&upstream.dir, BRANCH), Some(laptop), "nothing pushed");
+}

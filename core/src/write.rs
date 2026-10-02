@@ -21,6 +21,24 @@ pub struct Fetched<'a> {
     pub committer: &'a Signer,
 }
 
+impl Fetched<'_> {
+    /// The folder of `path` that is a file at the tip, so `path` cannot be created there: git2's
+    /// tree builder would fail with a D/F conflict, which an op answers as a 409 instead.
+    pub async fn file_ancestor<'p>(&self, path: &'p str) -> Result<Option<&'p str>, StoreError> {
+        for dir in ancestors(path) {
+            if self.store.blob_at(self.tip, dir).await?.is_some() {
+                return Ok(Some(dir));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Every proper directory prefix of `file`: `a/b/c.md` -> `a`, `a/b`.
+pub(crate) fn ancestors(file: &str) -> impl Iterator<Item = &str> {
+    file.match_indices('/').map(|(at, _)| &file[..at])
+}
+
 /// The op's answer for one fetched tip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Check<T> {
