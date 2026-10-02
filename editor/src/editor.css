@@ -209,3 +209,37 @@
 .riki-block-menu [disabled] { opacity: 0.45; cursor: default; }
 .riki-block-submenu { display: flex; flex-direction: column; margin: 0 0 0.25rem 0.75rem; padding-left: 0.25rem; border-left: 1px solid var(--riki-border); }
 .ProseMirror[data-dragging="true"] .ProseMirror-selectednode { opacity: 0.5; }
+
+.riki-slash-menu {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--riki-border);
+  border-radius: 12px;
+  background: var(--riki-bg-raised);
+  box-shadow: var(--riki-shadow-lg);
+}
+.riki-slash-menu[data-show="false"] { display: none; }
+.riki-slash-menu button {
+  display: block;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--riki-text-muted);
+  font: 500 0.8125rem/1 var(--riki-font);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.riki-slash-menu button[hidden] { display: none; }
+.riki-slash-menu button:hover, .riki-slash-menu button.is-selected {
+  background-color: var(--riki-surface-strong);
+  color: var(--riki-text-strong);
+}

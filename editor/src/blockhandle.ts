@@ -1,7 +1,8 @@
 // The block handle: on hover, the editor's left gutter shows + (add a block below) and ⋮⋮ (drag
 // to reorder; click for Turn into / Duplicate / Delete). It is Milkdown's block plugin, so the
 // drag is the plugin's own native HTML drag of the hovered node. Registered inside `makeEditor`
-// so the fixture suite loads it; it adds no node, mark or schema change.
+// so the fixture suite loads it; it adds no node, mark or schema change. The gutter + hands
+// the new empty paragraph to the slash menu.
 
 import type { Ctx } from '@milkdown/kit/ctx'
 import { editorViewCtx } from '@milkdown/kit/core'
@@ -10,6 +11,7 @@ import type { Node } from '@milkdown/kit/prose/model'
 import { Selection, TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { openSlashMenu } from './slashmenu'
 import { TURN_INTO } from './selectiontoolbar'
 import type { TurnInto } from './selectiontoolbar'
 import { icon } from './toolbar'
@@ -180,8 +182,9 @@ class BlockHandleView {
       const target = this.#hovered()
       if (!target) return
       this.closeMenu()
-      addBlockBelow(this.#view(), target)
-      this.#view().focus()
+      const view = this.#view()
+      if (addBlockBelow(view, target)) openSlashMenu(view)
+      view.focus()
     })
     drag.addEventListener('click', () => {
       if (!this.#menu.hidden) {

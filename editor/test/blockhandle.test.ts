@@ -145,6 +145,22 @@ describe('block handle', () => {
     expect(out).toBe('one\n\nnew\n\ntwo\n')
   })
 
+  it('+ opens the slash menu on the new empty paragraph, and a pick lands there', async () => {
+    const out = await withEditor('one\n\ntwo\n', async (editor, root) => {
+      await hover(editor, 0)
+      click(root, 'block-add')
+      await frame()
+      const menu = root.querySelector<HTMLElement>('.riki-slash-menu')!
+      expect(menu.dataset['show']).toBe('true')
+      expect([...menu.querySelectorAll<HTMLElement>('button')].filter((b) => !b.hidden)).toHaveLength(16)
+      click(root, 'slash-warning')
+      expect(menu.dataset['show']).toBe('false')
+      viewOf(editor).dispatch(viewOf(editor).state.tr.insertText('careful'))
+      return markdown(editor)
+    })
+    expect(out).toBe('one\n\n> [!WARNING]\n> careful\n\ntwo\n')
+  })
+
   it('an action on a stale block does nothing', async () => {
     await withEditor('one\n\ntwo\n', (editor) => {
       const view = viewOf(editor)

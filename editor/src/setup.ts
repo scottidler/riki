@@ -24,6 +24,7 @@ import { imageView } from './images'
 import { linkBoxPlugin } from './linkbox'
 import { configureSelectionToolbar, selectionToolbar } from './selectiontoolbar'
 import { insertTableCommand } from './table'
+import { configureSlashMenu, slashMenu } from './slashmenu'
 import { taskPlugins } from './tasks'
 
 /** `@milkdown/preset-commonmark` 7.22.2 passes mdast `title: null` into an image attr declared
@@ -95,6 +96,8 @@ export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup
     .use(selectionToolbar)
     .config(configureBlockHandle)
     .use(blockHandle)
+    .config(configureSlashMenu)
+    .use(slashMenu)
     .config((ctx) => {
       ctx.update(blockContainerTypes.key, (prev) => [...prev, 'alert'])
     })

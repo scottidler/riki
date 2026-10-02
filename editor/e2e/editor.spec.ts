@@ -190,3 +190,29 @@ test('dragging the block handle moves the block (native drag)', async ({ page, r
   await expect(page.locator('.riki-editor')).toHaveCount(0)
   expect(riki.file('guide.md')).toBe('A canonical page.\n\n# Guide\n\n- one\n- two\n')
 })
+
+test('typing / in an empty paragraph opens the slash menu; Heading 2 is saved, and the gutter + opens it too', async ({ page, riki }) => {
+  await page.goto(`${riki.url}/guide`)
+  await page.locator('#riki-edit').click()
+  await expect(editor(page)).toHaveAttribute('contenteditable', 'true')
+  const menu = page.locator('.riki-slash-menu')
+  const paragraph = editor(page).getByText('A canonical page.')
+
+  // The gutter + below the paragraph opens the menu on the new empty paragraph.
+  await paragraph.hover()
+  await page.locator('.riki-block-handle [data-control="block-add"]').click()
+  await expect(menu).toHaveAttribute('data-show', 'true')
+  await expect(menu.locator('button:visible')).toHaveCount(16)
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveAttribute('data-show', 'false')
+
+  // Typing / in that paragraph opens it, filtered.
+  await page.keyboard.type('/head')
+  await expect(menu).toHaveAttribute('data-show', 'true')
+  await expect(menu.locator('button:visible')).toHaveCount(3)
+  await menu.locator('[data-control="slash-h2"]').click()
+  await page.keyboard.type('Next')
+  await control(page, 'save').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('guide.md')).toBe('# Guide\n\nA canonical page.\n\n## Next\n\n- one\n- two\n')
+})

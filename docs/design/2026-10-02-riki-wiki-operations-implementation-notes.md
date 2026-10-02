@@ -220,3 +220,22 @@
 - Deleting the parent of an only child vs. deleting just the node: ProseMirror would otherwise refill the list with an empty item, leaving a stray `-` in the saved file.
 ### Open questions
 - None.
+
+## Phase 13: Slash menu
+### Design decisions
+- `editor/src/slashmenu.ts` holds the feature: `slashFactory('RIKI_SLASH')` (`@milkdown/kit/plugin/slash`) with a plugin view built on `SlashProvider` for positioning, configured by `configureSlashMenu` and registered in `makeEditor` (editor/src/setup.ts) right after the block handle. It adds no node, mark or schema change; all 66 canonical fixtures stay byte-identical (full vitest suite green).
+- `SLASH_ITEMS` is exactly the 16 entries in order: the eight Phase 11 `TURN_INTO` entries reused as-is (Text, Heading 1-3, Bulleted list, Numbered list, Task list, Quote), then Code block (`createCodeBlockCommand`), Table (`insertTableCommand` with the toolbar's `NEW_TABLE`, so unaligned `| --- |`), Divider (`insertHrCommand`), then the five alerts through `setAlertCommand` (GitHub `> [!TYPE]`). No new block logic.
+- Visibility is computed by `slashFilter(state, forced)`: the cursor is collapsed in a paragraph outside a table and the paragraph's text matches `/^\/\S*$/` (a `/` at the start, the rest is the filter), or the menu was force-opened on an empty paragraph. Filtering is a case-insensitive label substring (`filterSlashItems`); the menu hides when nothing matches.
+- Choosing an entry deletes the typed `/filter` text, then runs the entry on the now-empty paragraph. Keys are the plugin's `handleKeyDown`: Arrow Up/Down move the highlight, Enter picks, Escape dismisses until the cursor moves.
+- `openSlashMenu(view)` (a `WeakMap<EditorView, SlashMenuView>` lookup) force-opens the menu on the cursor's empty paragraph and returns false anywhere else. The menu `div.riki-slash-menu` carries `data-show`, and its buttons are `data-control="slash-<id>"`.
+- Phase 12's gutter-+ deviation is closed here: the + click handler in `editor/src/blockhandle.ts` now calls `openSlashMenu` after `addBlockBelow` puts the cursor in the new empty paragraph.
+- Tests: vitest `test/slashmenu.test.ts` (9): exactly the 16 labels in order; hidden until a leading `/`; filter and no-match hide; Warning on an empty paragraph; Heading 2 removes the typed filter; table, divider, code block and task list inserts; arrow/Escape keys; Enter picks the highlighted entry; `openSlashMenu` true on an empty paragraph, false elsewhere. `test/blockhandle.test.ts` gains the + opens-the-slash-menu test (pick Warning, type, serialize in place). Playwright `e2e/editor.spec.ts`: gutter + opens the 16-entry menu, Escape closes it, typing `/head` filters to 3, Heading 2 then text saves `# Guide\n\nA canonical page.\n\n## Next\n\n- one\n- two\n`. Bundles rebuilt and staged.
+### Deviations
+- Warning on an empty paragraph serializes `> [!WARNING]` followed by `> <br />`, not the bare marker line: an empty paragraph inside the alert is written as `<br />` by Milkdown's own empty-paragraph rule (the same thing the fixed toolbar's alert button does on an empty paragraph today). The criterion is met as the marker line; typing text replaces the `<br />` (`> [!WARNING]\n> careful`). The test asserts both.
+- Phase 12's deviation (gutter + did not open a menu) is closed, not carried.
+### Tradeoffs
+- Force-open state on the menu vs. inserting a literal `/` for the gutter +: a literal `/` would leave a stray character behind if the menu is dismissed. The forced flag clears whenever the menu hides.
+- Label substring filter vs. fuzzy matching: 16 short labels; substring is predictable and needs no dependency.
+- Own `handleKeyDown` on the plugin spec vs. a document-level key listener: the keys only apply while the editor has the cursor in the trigger paragraph, and ProseMirror's own Enter would otherwise split the paragraph first.
+### Open questions
+- Should an alert chosen on an empty paragraph serialize as the bare marker (`> [!WARNING]`, no `<br />`) when nothing is typed? That needs an alert-specific rule for empty paragraphs and would change the round trip of `> [!X]\n> <br />`; left alone.
