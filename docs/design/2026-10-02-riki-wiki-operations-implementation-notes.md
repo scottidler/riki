@@ -184,3 +184,20 @@
 - Cursor already inside an existing link: Mod-k adds a link mark over the new range rather than editing the old href (the fixed toolbar's link button still does that). Editing an existing link's target is not in the Phase 10 bullet.
 ### Open questions
 - None.
+
+## Phase 11: Selection toolbar
+### Design decisions
+- `editor/src/selectiontoolbar.ts` holds the feature: `tooltipFactory('RIKI_SELECTION')` from `@milkdown/kit/plugin/tooltip`, configured by `configureSelectionToolbar(sourceFile)` and registered in `makeEditor` (editor/src/setup.ts) right after `linkBoxPlugin`, so the fixture suite loads it. It adds no node, mark or schema change, so serialization is untouched (all 66 canonical fixtures still byte-identical).
+- Controls: a Turn into button opening a menu (Text, Heading 1-3, Bulleted list, Numbered list, Task list, Quote; `TURN_INTO`), then bold, italic, strikethrough, inline code, and link. No underline (not GFM). Commands are the same kit commands the fixed toolbar uses, called through `commandsCtx`.
+- Link opens the Phase 10 `openLinkBox` over the selection (declines in a node that cannot hold a link mark), after hiding the bar.
+- `shouldShowSelectionToolbar(state)`: a non-empty `TextSelection` whose parent is not a code block; the provider's `shouldShow` adds editable and focus (editor or the bar). Controls `preventDefault` on mousedown so the selection survives a click.
+- The task-list helper in `toolbar.ts` became `makeTaskList(ctx)` (the old `taskList(editor)` wraps it) so both toolbars share one implementation.
+- Bar controls carry `data-control="selection-<id>"`, not the fixed toolbar's ids: the existing e2e selectors (`[data-control="bold"]`, `"link"`) would otherwise match two elements and fail Playwright strict mode. Styles in `editor/src/editor.css` (`.riki-selection-toolbar`, `.riki-selection-menu`), reusing the fixed toolbar's button look. Bundles rebuilt and staged.
+- Tests: vitest `test/selectiontoolbar.test.ts` (8: mounts inside the root with the listed controls and no underline, Turn into list, Turn into H2 on a paragraph serializes `## pick this`, bullet/task/quote/text, bold/italic/strike/code, menu open/close, link opens the link box, show rules for range/cursor/code block). Playwright `e2e/editor.spec.ts`: selecting a line shows the bar, Turn into Heading 2 then bold saves `## **A canonical page.**`, and the fixed toolbar is still visible.
+### Deviations
+- None.
+### Tradeoffs
+- A custom menu of buttons vs. a `<select>` for Turn into: a select takes focus and the native popup is unstyleable and flaky under Playwright; buttons with mousedown-prevent keep the editor selection.
+- The bar mounts on the first editor update (the provider's behavior), not at editor creation: tests dispatch a selection before looking for it.
+### Open questions
+- None.

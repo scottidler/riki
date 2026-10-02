@@ -1,0 +1,172 @@
+// The selection toolbar: a floating bar over selected text with Turn into, bold, italic,
+// strikethrough, inline code, and link (which opens the Ctrl+K link box). It is a Milkdown
+// tooltip plugin registered inside `makeEditor`, so the fixture suite loads it. It adds no node
+// or mark, so it cannot change the serialization. The fixed toolbar stays beside it.
+
+import type { CmdKey } from '@milkdown/kit/core'
+import type { Ctx } from '@milkdown/kit/ctx'
+import { commandsCtx, editorViewCtx } from '@milkdown/kit/core'
+import { TooltipProvider, tooltipFactory } from '@milkdown/kit/plugin/tooltip'
+import {
+  linkSchema,
+  toggleEmphasisCommand,
+  toggleInlineCodeCommand,
+  toggleStrongCommand,
+  turnIntoTextCommand,
+  wrapInBlockquoteCommand,
+  wrapInBulletListCommand,
+  wrapInHeadingCommand,
+  wrapInOrderedListCommand,
+} from '@milkdown/kit/preset/commonmark'
+import { toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
+import { TextSelection } from '@milkdown/kit/prose/state'
+import type { EditorState } from '@milkdown/kit/prose/state'
+import type { EditorView } from '@milkdown/kit/prose/view'
+import { openLinkBox } from './linkbox'
+import { BUTTONS, icon, makeTaskList } from './toolbar'
+
+/** One entry of the Turn into menu. */
+export interface TurnInto {
+  id: string
+  label: string
+  run: (ctx: Ctx) => void
+}
+
+const run = (ctx: Ctx, key: CmdKey<any>, payload?: unknown): void => {
+  ctx.get(commandsCtx).call(key, payload)
+}
+
+export const TURN_INTO: TurnInto[] = [
+  { id: 'text', label: 'Text', run: (ctx) => run(ctx, turnIntoTextCommand.key) },
+  { id: 'h1', label: 'Heading 1', run: (ctx) => run(ctx, wrapInHeadingCommand.key, 1) },
+  { id: 'h2', label: 'Heading 2', run: (ctx) => run(ctx, wrapInHeadingCommand.key, 2) },
+  { id: 'h3', label: 'Heading 3', run: (ctx) => run(ctx, wrapInHeadingCommand.key, 3) },
+  { id: 'bullet-list', label: 'Bulleted list', run: (ctx) => run(ctx, wrapInBulletListCommand.key) },
+  { id: 'ordered-list', label: 'Numbered list', run: (ctx) => run(ctx, wrapInOrderedListCommand.key) },
+  { id: 'task-list', label: 'Task list', run: makeTaskList },
+  { id: 'quote', label: 'Quote', run: (ctx) => run(ctx, wrapInBlockquoteCommand.key) },
+]
+
+/** Text is selected in a block that takes inline formatting (not a code block). */
+export function shouldShowSelectionToolbar(state: EditorState): boolean {
+  const { selection } = state
+  if (!(selection instanceof TextSelection) || selection.empty) return false
+  if (!state.doc.textBetween(selection.from, selection.to).length) return false
+  return !selection.$from.parent.type.spec.code
+}
+
+const selectionTooltip = tooltipFactory('RIKI_SELECTION')
+
+/** Inline controls, in order; their icons come from the fixed toolbar's table. */
+const INLINE = [
+  { id: 'bold', title: 'Bold', command: toggleStrongCommand },
+  { id: 'italic', title: 'Italic', command: toggleEmphasisCommand },
+  { id: 'strike', title: 'Strikethrough', command: toggleStrikethroughCommand },
+  { id: 'code', title: 'Inline code', command: toggleInlineCodeCommand },
+] as const
+
+function iconFor(id: string): SVGSVGElement {
+  const button = BUTTONS.find((b) => b.id === id)
+  if (!button) throw new Error(`toolbar has no button ${id}`)
+  return icon(button.icon)
+}
+
+/** Controls keep the editor's selection: a mousedown on them never takes focus. */
+function control(id: string, title: string): HTMLButtonElement {
+  const el = document.createElement('button')
+  el.type = 'button'
+  el.dataset['control'] = `selection-${id}`
+  el.title = title
+  el.setAttribute('aria-label', title)
+  el.addEventListener('mousedown', (event) => event.preventDefault())
+  return el
+}
+
+function buildBar(ctx: Ctx, sourceFile: string, hide: () => void): HTMLElement {
+  const bar = document.createElement('div')
+  bar.className = 'riki-toolbar riki-selection-toolbar'
+  bar.setAttribute('role', 'toolbar')
+  bar.setAttribute('aria-label', 'Format selection')
+  const view = (): EditorView => ctx.get(editorViewCtx)
+
+  const turn = control('turn-into', 'Turn into')
+  turn.classList.add('riki-toolbar-text')
+  turn.append('Turn into')
+  turn.setAttribute('aria-haspopup', 'menu')
+  turn.setAttribute('aria-expanded', 'false')
+  const menu = document.createElement('div')
+  menu.className = 'riki-selection-menu'
+  menu.setAttribute('role', 'menu')
+  menu.hidden = true
+  const setMenu = (open: boolean): void => {
+    menu.hidden = !open
+    turn.setAttribute('aria-expanded', String(open))
+  }
+  for (const item of TURN_INTO) {
+    const entry = control(`turn-${item.id}`, item.label)
+    entry.setAttribute('role', 'menuitem')
+    entry.textContent = item.label
+    entry.addEventListener('click', () => {
+      setMenu(false)
+      item.run(ctx)
+      view().focus()
+    })
+    menu.append(entry)
+  }
+  turn.addEventListener('click', () => setMenu(Boolean(menu.hidden)))
+  bar.append(turn, menu)
+
+  for (const item of INLINE) {
+    const el = control(item.id, item.title)
+    el.append(iconFor(item.id))
+    el.addEventListener('click', () => {
+      run(ctx, item.command.key)
+      view().focus()
+    })
+    bar.append(el)
+  }
+
+  const link = control('link', 'Link (Ctrl+K)')
+  link.append(iconFor('link'))
+  link.addEventListener('click', () => {
+    const editorView = view()
+    const type = linkSchema.type(ctx)
+    hide()
+    if (!editorView.state.selection.$from.parent.type.allowsMarkType(type)) return
+    openLinkBox({ view: editorView, link: type, sourceFile })
+  })
+  bar.append(link)
+  return bar
+}
+
+/** Point the tooltip plugin's spec at the toolbar view. `sourceFile` is the file being edited
+ *  (the link box writes hrefs relative to it). */
+export const configureSelectionToolbar = (sourceFile: string) => (ctx: Ctx) => {
+  ctx.set(selectionTooltip.key, {
+    view: () => {
+      let provider: TooltipProvider | undefined
+      const bar = buildBar(ctx, sourceFile, () => provider?.hide())
+      provider = new TooltipProvider({
+        content: bar,
+        debounce: 20,
+        offset: 8,
+        shouldShow: (view) =>
+          view.editable && (view.hasFocus() || bar.contains(document.activeElement)) && shouldShowSelectionToolbar(view.state),
+      })
+      provider.onHide = () => {
+        const menu = bar.querySelector<HTMLElement>('.riki-selection-menu')
+        if (menu) menu.hidden = true
+        bar.querySelector('[data-control="turn-into"]')?.setAttribute('aria-expanded', 'false')
+      }
+      return {
+        update: provider.update,
+        destroy: () => {
+          provider?.destroy()
+          bar.remove()
+        },
+      }
+    },
+  })
+}
+
+export const selectionToolbar = selectionTooltip

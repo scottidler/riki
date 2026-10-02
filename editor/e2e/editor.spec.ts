@@ -124,3 +124,26 @@ test('dismissing the load-latest confirm keeps the local edits', async ({ page, 
   await control(page, 'load-latest').click()
   await expect(editor(page)).toContainText('Keep me.')
 })
+
+test('selecting text floats the selection toolbar; Turn into Heading 2 and bold are saved, the fixed toolbar stays', async ({ page, riki }) => {
+  await page.goto(`${riki.url}/guide`)
+  await page.locator('#riki-edit').click()
+  await expect(editor(page)).toHaveAttribute('contenteditable', 'true')
+  const bar = page.locator('.riki-selection-toolbar')
+  await expect(control(page, 'bold').first()).toBeVisible()
+  await editor(page).getByText('A canonical page.').click()
+  await expect(bar).toBeHidden()
+
+  await editor(page).getByText('A canonical page.').click({ clickCount: 3 })
+  await expect(bar).toBeVisible()
+  await bar.locator('[data-control="selection-turn-into"]').click()
+  await bar.locator('[data-control="selection-turn-h2"]').click()
+  await expect(editor(page).locator('h2')).toHaveText('A canonical page.')
+
+  await editor(page).locator('h2').click({ clickCount: 3 })
+  await expect(bar).toBeVisible()
+  await bar.locator('[data-control="selection-bold"]').click()
+  await control(page, 'save').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('guide.md')).toContain('## **A canonical page.**')
+})

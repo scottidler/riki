@@ -1,6 +1,7 @@
 // The no-syntax authoring UI: one toolbar of kit commands. Authors never type Markdown; the
 // input rules (`## `) stay on as a shortcut, and nothing here needs them.
 
+import type { Ctx } from '@milkdown/kit/ctx'
 import type { Editor } from '@milkdown/kit/core'
 import { editorViewCtx } from '@milkdown/kit/core'
 import {
@@ -38,12 +39,14 @@ const call = (editor: Editor, key: Parameters<typeof callCommand>[0], payload?: 
   editor.action(callCommand(key, payload))
 
 /** Turn the selection into a task list: a bullet list first if it is in no list yet. */
-function taskList(editor: Editor): void {
-  if (!call(editor, makeTasksCommand.key)) {
-    call(editor, wrapInBulletListCommand.key)
-    call(editor, makeTasksCommand.key)
+export function makeTaskList(ctx: Ctx): void {
+  if (!callCommand(makeTasksCommand.key)(ctx)) {
+    callCommand(wrapInBulletListCommand.key)(ctx)
+    callCommand(makeTasksCommand.key)(ctx)
   }
 }
+
+const taskList = (editor: Editor): void => editor.action(makeTaskList)
 
 export const BUTTONS: Button[] = [
   { id: 'bold', title: 'Bold', icon: 'M4.75 2.75h4a2.6 2.6 0 0 1 0 5.2h-4Zm0 5.2h4.75a2.65 2.65 0 0 1 0 5.3H4.75Z', run: (e) => call(e, toggleStrongCommand.key) },
