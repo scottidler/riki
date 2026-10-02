@@ -20,6 +20,7 @@ import { $remark } from '@milkdown/kit/utils'
 import { visit } from 'unist-util-visit'
 import { alertHandler, alertPlugins } from './alert'
 import { imageView } from './images'
+import { linkBoxPlugin } from './linkbox'
 import { insertTableCommand } from './table'
 import { taskPlugins } from './tasks'
 
@@ -87,6 +88,7 @@ export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup
     .use(insertTableCommand)
     .use(alertPlugins)
     .use(imageView(sourceFile))
+    .use(linkBoxPlugin(sourceFile))
     .config((ctx) => {
       ctx.update(blockContainerTypes.key, (prev) => [...prev, 'alert'])
     })

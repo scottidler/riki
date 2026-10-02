@@ -165,3 +165,22 @@
 - Ctrl+K is handled on `keydown` at the document in the bubble phase, not capture: the editor's own handlers (Phase 10) see the key first, and `isPaletteShortcut` already stands down for editor targets. The palette's own keys use capture so a dialog opened over it cannot swallow them.
 ### Open questions
 - None.
+
+## Phase 10: Editor link box
+### Design decisions
+- `editor/src/linkbox.ts` holds the whole feature: `linkBoxPlugin(sourceFile)` (a `$prose` plugin, registered in `makeEditor` right after `imageView(sourceFile)`, so the fixture suite loads it), and pure helpers `relativeHref`, `isAbsoluteUrl`, `urlChoice`, `matchPages`, `applyLink`, with `openLinkBox` as the DOM piece. The plugin's `handleKeyDown` takes Ctrl/Cmd+K (no shift/alt), returns true so ProseMirror `preventDefault`s the browser's own shortcut: editor/src/linkbox.ts.
+- Rows are the tree's pages filtered client-side (every word must be a substring of title or path, tree order), with the search route's hits appended for matches the title/path filter missed (deduped by path, 150ms debounce shared with the palette). Both read through the Phase 7/9 helpers (`fetchTree`, `fetchSearch`); a tree failure shows the reason and the box still takes a URL and still searches.
+- `relativeHref(sourceFile, target)`: drop the shared leading directories, one `..` per remaining source directory, then the rest of the target (`a/b.md` -> `c/d.md` is `../c/d.md`; same directory is the bare name, no `./`). The href is the repo path of the `.md`, matching how `core/src/render.rs:resolve` reads links.
+- Input matching `^scheme:\S+$` and `URL.canParse` is inserted as typed (first row, selected); text is the selection, or the URL itself when nothing is selected. A page row with no selection inserts the page title as the link text.
+- The selection range is captured when the box opens and applied on Enter (`addMark` over a range, or a text node carrying the link mark at the cursor), then focus goes back to the editor. Escape or a backdrop click closes with no change. The plugin declines (returns false) when the editor is read-only or the cursor's parent cannot hold a link mark (code block).
+- Palette hand-off: `isPaletteShortcut` now also stands down for targets inside `.riki-linkbox`, and the box swallows Ctrl+K while open, so Ctrl+K in the box never opens the page palette: editor/src/page/search.ts.
+- The box reuses the palette's classes (`riki-dialog`, `riki-search*`), so no CSS changed; bundles rebuilt and staged.
+- Tests: vitest `test/linkbox.test.ts` (12: relative paths, URL detection, page filtering, the Phase 10 criterion end to end, with `a/b.md` choosing `c/d.md` giving `[here](../c/d.md)` that round-trips byte-identically; no-selection title text; URL passthrough; arrows plus a search-only hit; Escape/Ctrl+K inside; Ctrl+K through the real keymap and its refusal in a code block; tree failure). Fixture suite untouched and green.
+### Deviations
+- The Phase 9 Playwright test `inside the editor Ctrl+K does not open the palette` (asserting no `.riki-search` at all) is inverted by name to `inside the editor Ctrl+K opens the link box, not the palette, and links relative to the file`, which saves and checks `[Home](../README.md)` in the committed file. The old assertion pinned "the editor does nothing on Ctrl+K", which this phase changes (e2e/search.spec.ts).
+### Tradeoffs
+- A hand-built box on the palette's styling vs. Milkdown's link-tooltip input: the tooltip edits an href by hand and has no page picker; the doc asks for the shared search.
+- Linking only the selection's marks via `addMark` vs. replacing the text: keeps the author's other marks (bold, code) inside the link.
+- Cursor already inside an existing link: Mod-k adds a link mark over the new range rather than editing the old href (the fixed toolbar's link button still does that). Editing an existing link's target is not in the Phase 10 bullet.
+### Open questions
+- None.

@@ -208,9 +208,9 @@ export function openPalette(navigate: Navigate, fetchImpl: Fetch = fetch): void 
 }
 
 /** True for the palette's shortcut, Ctrl+K or Cmd+K, when the key was not typed in the editor
- *  (which owns Mod-k for its link box). */
+ *  (which owns Mod-k for its link box, and so does the box once open). */
 export function isPaletteShortcut(event: KeyboardEvent): boolean {
   if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'k') return false
   const target = event.target instanceof Element ? event.target : null
-  return !target?.closest('.riki-editor-root, .ProseMirror')
+  return !target?.closest('.riki-editor-root, .ProseMirror, .riki-linkbox')
 }

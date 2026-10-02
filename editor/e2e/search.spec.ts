@@ -1,5 +1,5 @@
 // The Ctrl+K palette against the real riki binary: the shortcut, the header button, a hit's
-// URL and anchor, and the editor keeping Ctrl+K to itself.
+// URL and anchor, and the editor's Ctrl+K link box taking the key.
 
 import { expect, test } from './riki'
 
@@ -32,7 +32,7 @@ test('the header button opens the palette and Escape closes it', async ({ page, 
   await expect(page.locator('.riki-search')).toHaveCount(0)
 })
 
-test('inside the editor Ctrl+K does not open the palette', async ({ page, riki }) => {
+test('inside the editor Ctrl+K opens the link box, not the palette, and links relative to the file', async ({ page, riki }) => {
   await riki.pushAndServe(FILES, '/reference/tables')
   await page.goto(`${riki.url}/reference/tables`)
   await page.locator('#riki-edit').click()
@@ -40,5 +40,13 @@ test('inside the editor Ctrl+K does not open the palette', async ({ page, riki }
   await expect(editor).toHaveAttribute('contenteditable', 'true')
   await editor.click()
   await page.keyboard.press('Control+k')
-  await expect(page.locator('.riki-search')).toHaveCount(0)
+  await expect(page.locator('.riki-linkbox input')).toBeFocused()
+  await expect(page.locator('[role="dialog"][aria-label="Search"]')).toHaveCount(0)
+  await page.locator('.riki-linkbox input').fill('home')
+  await expect(page.locator('.riki-linkbox .riki-search-hit').first()).toBeVisible()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.riki-linkbox')).toHaveCount(0)
+  await page.locator('[data-control="save"]').click()
+  await expect(page.locator('.riki-editor')).toHaveCount(0)
+  expect(riki.file('reference/tables.md')).toContain('[Home](../README.md)')
 })
