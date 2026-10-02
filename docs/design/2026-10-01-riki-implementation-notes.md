@@ -511,3 +511,26 @@ None.
 
 ### Open questions
 None.
+
+## Phase 7: Deploy (home)
+
+### Design decisions
+- Content repo: new private `scottidler/riki-content`, seeded with `README.md` (`# Wiki` + one paragraph), seed commit `b2d5e78`.
+- Push credential: ed25519 deploy key `~/.ssh/identities/home/riki-deploy` (no passphrase, `SHA256:v4NEPXbhVcUAAJlvQtb+FaeZJFGcVuMHfd9Eqgxjgwk`), added read-write to riki-content. Never committed.
+- Config and unit live in dotfiles (`HOME/.config/riki/riki.yml`, `HOME/.config/systemd/user/riki.service`), linked by manifest's recursive `link:`; a `riki` entry under `script:` does `daemon-reload` + `enable --now`, the same shape as `sccache`.
+- Edge: `riki.escote.duckdns.org { import authelia; reverse_proxy 127.0.0.1:8737 }` in homelab `caddy/Caddyfile`; Authelia rule added to the existing `hindsight`/`portainer` entry (`one_factor`, `group:admins`). Both files are single-file bind mounts, so they were edited in place (inode unchanged) and applied with `caddy reload` and `docker restart authelia`; no compose up/down.
+- `site.name: Wiki`.
+
+### Deviations
+- `GIT_SSH_COMMAND` is `ssh -F /dev/null -i %h/.ssh/identities/home/riki-deploy -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new`, not the planned `ssh -i ... -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`. With the planned form, `ssh -v` showed only the home key `id_ed25519` offered and GitHub answering `Hi scottidler!`: `~/.ssh/config` adds `IdentityFile ~/.ssh/identities/home/id_ed25519` for github.com (`Match host github.com exec "test -z $GITCONFIG_SSH_KEY"`), the unit inherits `SSH_AUTH_SOCK=/run/user/1000/gcr/ssh`, and the agent offers its key first. riki would have pushed as user scottidler, with write access to every repo of his. With `-F /dev/null` + `IdentityAgent=none` the same probe answers `Hi scottidler/riki-content!`, and a save pushed `534bece` with that as the only credential ssh could use.
+- The `Environment=` line is quoted. Unquoted, `systemd-analyze --user verify` rejected every word after the first (`Invalid environment assignment, ignoring: -i`), so `GIT_SSH_COMMAND` would have been just `ssh`.
+- The homelab commit landed on its checked-out branch `authelia` (7 commits ahead of `main`, no PR), since the running containers mount that working tree.
+
+### Tradeoffs
+- `-F /dev/null` drops every `~/.ssh/config` setting for riki's ssh, including `PreferredAuthentications`; github.com needs none of them, and the host key still checks against `~/.ssh/known_hosts`.
+- The deploy-key proof save used a synthetic identity (`riki-deploy-check@localhost`) on the loopback API rather than a real user; the laptop push then removed `deploy-check.md` (`cef9685`).
+
+### Open questions
+- Rollback across the `site:` key: v0.1.0 refuses it (`unknown field \`site\``, exit 1, `Restart=on-failure` loop). Rolling back to v0.1.0 means commenting out `site:` first. Is that documented procedure enough, or should config gain a forward-compat story (it is `deny_unknown_fields` by design)?
+- LAN access needs a pfSense Unbound host override `riki.escote.duckdns.org -> 10.10.10.10` (there is no wildcard override). Without it the name resolves to the WAN IP `75.164.188.133` and curl fails with `no alternative certificate subject name matches target hostname`. Router state, operator step.
+- Browser edit through the Caddy URL and Phase 0c criteria 1-2: BLOCKED-ON-OPERATOR (needs Scott's Authelia login); steps are in the design doc's Phase 7 results.
