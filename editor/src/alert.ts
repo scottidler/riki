@@ -8,9 +8,11 @@
 import type { Blockquote, BlockContent, DefinitionContent, Paragraph, Parents, Root } from 'mdast'
 import type { Handle, State, Info } from 'mdast-util-to-markdown'
 import type { VFile } from 'vfile'
-import { $command, $nodeSchema, $remark } from '@milkdown/kit/utils'
+import { InputRule } from '@milkdown/kit/prose/inputrules'
+import { $command, $inputRule, $nodeSchema, $remark } from '@milkdown/kit/utils'
 import type { Node as ProseNode, NodeType } from '@milkdown/kit/prose/model'
 import { findWrapping } from '@milkdown/kit/prose/transform'
+import { TextSelection } from '@milkdown/kit/prose/state'
 import type { Command } from '@milkdown/kit/prose/state'
 import { visit } from 'unist-util-visit'
 
@@ -237,4 +239,25 @@ export function setAlert(type: NodeType, kind: AlertKind): Command {
 
 export const setAlertCommand = $command('SetAlert', (ctx) => (kind?: AlertKind) => setAlert(alertSchema.type(ctx), kind ?? 'NOTE'))
 
-export const alertPlugins = [remarkAlert, alertSchema, setAlertCommand].flat()
+/** `[!TIP] ` typed at the start of a quote: the quote becomes that alert (the `> ` rule has
+ *  already wrapped the line, so this is `> [!TIP] ` typed out). The marker text is removed. */
+export const alertInputRule = $inputRule(
+  (ctx) =>
+    new InputRule(/^\[!(note|tip|important|warning|caution)\]\s$/i, (state, match, start, end) => {
+      const kind = match[1]?.toUpperCase()
+      if (!kind || !isAlertKind(kind)) return null
+      const $from = state.doc.resolve(start)
+      const quote = $from.depth >= 2 ? $from.node($from.depth - 1) : null
+      if (!quote || quote.type.name !== 'blockquote' || $from.index($from.depth - 1) !== 0) return null
+      const quoteStart = $from.before($from.depth - 1)
+      const tr = state.tr.delete(start, end)
+      const alert = alertSchema.type(ctx).create(
+        { kind, marker: `[!${kind}]`, title: '', separated: false },
+        tr.doc.nodeAt(quoteStart)?.content,
+      )
+      tr.replaceWith(quoteStart, quoteStart + tr.doc.nodeAt(quoteStart)!.nodeSize, alert)
+      return tr.setSelection(TextSelection.near(tr.doc.resolve(start))).scrollIntoView()
+    }),
+)
+
+export const alertPlugins = [remarkAlert, alertSchema, setAlertCommand, alertInputRule].flat()

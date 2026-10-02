@@ -259,3 +259,17 @@
 ### Open questions
 - Should the row handle get "Add row after" to match the column handle? table-block's row menu has only Delete; rows are added from the boundary `+`. Not in the Phase 14 bullet.
 - Pasted HTML tables still get `alignment: "left"` from preset-gfm's `getFromDOM` (`dom.style.textAlign || "left"`), so a pasted table serializes `| :--- |`. Fixing that means replacing the cells' `parseDOM`; worth a follow-up?
+
+## Phase 15: Typing shortcuts
+### Design decisions
+- `alertInputRule` (`editor/src/alert.ts`) is a `$inputRule` in `alertPlugins`, so it registers inside `makeEditor` with the alert node. Pattern `^\[!(note|tip|important|warning|caution)\]\s$` (case-insensitive) fires on the space. It only applies when the paragraph is the first child of a blockquote; the `> ` preset rule has already wrapped the line, so `> [!TIP] ` typed out works. It deletes the marker text, replaces the blockquote with an `alert` (same content, kind and marker from the match) and keeps the cursor in the paragraph. Outside a quote, or past the quote's first block, the text stays literal.
+- `|NxM| ` is not re-implemented: Phase 14's alignment default already makes it unaligned; `test/typing.test.ts` confirms `|2x2| ` serializes `| --- | --- |`.
+- Tests (`test/typing.test.ts`, 7): all five kinds typed as `> [!KIND] text` serialize `> [!KIND]\n> text`; `[!TIP] x` outside a quote stays text; `|2x2| ` gives a `| --- | --- |` row with no alignment colons. Typing goes through `handleTextInput` so input rules fire as for real keystrokes.
+- Canonical fixtures unchanged (`git diff --stat a8021a8 -- editor/fixtures/canonical` empty). Bundles rebuilt and staged.
+- Final phase: design doc Status set to Implemented and the doc is committed with this phase.
+### Deviations
+- None.
+### Tradeoffs
+- Rule on the quote's first paragraph only vs. any paragraph in a quote: GitHub only recognizes the marker on the first line.
+### Open questions
+- None.
