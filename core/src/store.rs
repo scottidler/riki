@@ -33,6 +33,8 @@ pub enum StoreError {
     Join(#[from] tokio::task::JoinError),
     #[error(transparent)]
     Path(#[from] PathError),
+    #[error("two tree ops on one path: {0}")]
+    DuplicateTreeOp(String),
     #[error("{command} timed out after {timeout:?}")]
     Timeout { command: String, timeout: Duration },
     #[error("{command} failed ({}): {stderr}", code.map_or_else(|| "killed by signal".to_string(), |c| format!("exit {c}")))]
@@ -69,6 +71,21 @@ pub struct FileCommit<'a> {
     pub author: &'a Signer,
     pub committer: &'a Signer,
     pub message: &'a str,
+}
+
+/// One change to a tree: write `blob` at `path`, or delete `path`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeOp {
+    Upsert { path: String, blob: Oid },
+    Remove { path: String },
+}
+
+impl TreeOp {
+    pub fn path(&self) -> &str {
+        match self {
+            TreeOp::Upsert { path, .. } | TreeOp::Remove { path } => path,
+        }
+    }
 }
 
 /// What a push that git completed did. A timeout is `StoreError::Timeout`; any other failure
@@ -175,22 +192,51 @@ impl GitStore {
     /// Write `change` as a blob, a tree, and a commit object. Moves no ref, so it needs no lock.
     pub async fn commit_file(&self, change: FileCommit<'_>) -> Result<Oid, StoreError> {
         path::validate(change.path)?;
-        let parent = change.parent;
-        let path = change.path.to_string();
         let contents = change.contents.to_vec();
-        let author = change.author.clone();
-        let committer = change.committer.clone();
-        let message = change.message.to_string();
+        let blob = self.blocking(move |repo| Ok(repo.blob(&contents)?)).await?;
+        let ops = [TreeOp::Upsert {
+            path: change.path.to_string(),
+            blob,
+        }];
+        self.commit_tree(&ops, change.parent, change.author, change.committer, change.message)
+            .await
+    }
+
+    /// Apply `ops` to `parent`'s tree as one commit object. Moves no ref, so it needs no lock.
+    /// Every path is validated and no path may appear twice (libgit2 would refuse it with an
+    /// opaque error), both before the tree builder runs. A directory emptied by a remove is
+    /// dropped by git.
+    pub async fn commit_tree(
+        &self,
+        ops: &[TreeOp],
+        parent: Oid,
+        author: &Signer,
+        committer: &Signer,
+        message: &str,
+    ) -> Result<Oid, StoreError> {
+        let mut seen = std::collections::HashSet::new();
+        for op in ops {
+            path::validate(op.path())?;
+            if !seen.insert(op.path()) {
+                return Err(StoreError::DuplicateTreeOp(op.path().to_string()));
+            }
+        }
+        let ops = ops.to_vec();
+        let (author, committer, message) = (author.clone(), committer.clone(), message.to_string());
         self.blocking(move |repo| {
             let parent = repo.find_commit(parent)?;
-            let blob = repo.blob(&contents)?;
             let mut update = TreeUpdateBuilder::new();
-            update.upsert(path.as_str(), blob, FileMode::Blob);
+            for op in &ops {
+                match op {
+                    TreeOp::Upsert { path, blob } => update.upsert(path.as_str(), *blob, FileMode::Blob),
+                    TreeOp::Remove { path } => update.remove(path.as_str()),
+                };
+            }
             let tree = repo.find_tree(update.create_updated(repo, &parent.tree()?)?)?;
             let author = Signature::now(&author.name, &author.email)?;
             let committer = Signature::now(&committer.name, &committer.email)?;
             let commit = repo.commit(None, &author, &committer, &message, &tree, &[&parent])?;
-            debug!("commit_file: {path} blob={blob} commit={commit}");
+            debug!("commit_tree: {} ops commit={commit}", ops.len());
             Ok(commit)
         })
         .await

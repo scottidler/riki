@@ -393,3 +393,94 @@ async fn commit_file_rejects_bad_paths() {
         .await;
     assert!(matches!(result, Err(StoreError::Path(PathError::Nul(_)))));
 }
+
+#[tokio::test]
+async fn commit_tree_remove_plus_upsert_moves_a_blob_and_drops_the_emptied_directory() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n"), ("a/x.md", "moved\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let (old_oid, _) = store.blob_at(seed, "a/x.md").await.expect("read").expect("present");
+    let who = signer("alice");
+    let ops = [
+        TreeOp::Remove { path: "a/x.md".into() },
+        TreeOp::Upsert {
+            path: "c/x.md".into(),
+            blob: old_oid,
+        },
+    ];
+    let commit = store.commit_tree(&ops, seed, &who, &who, "move").await.expect("commit");
+    assert_eq!(store.blob_at(commit, "a/x.md").await.expect("read"), None);
+    let (new_oid, bytes) = store.blob_at(commit, "c/x.md").await.expect("read").expect("present");
+    assert_eq!(new_oid, old_oid, "same blob oid at the new path");
+    assert_eq!(bytes, b"moved\n");
+    let paths = store.blob_paths(commit).await.expect("paths");
+    assert_eq!(paths, vec![b"README.md".to_vec(), b"c/x.md".to_vec()]);
+    let repo = Repository::open_bare(store.dir()).expect("repo");
+    let tree = repo.find_commit(commit).expect("commit").tree().expect("tree");
+    assert!(tree.get_name("a").is_none(), "no empty tree left behind");
+}
+
+#[tokio::test]
+async fn commit_tree_rejects_two_ops_on_one_path_and_makes_no_commit() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let who = signer("alice");
+    let (blob, _) = store.blob_at(seed, "README.md").await.expect("read").expect("present");
+    let objects_before = count_objects(store.dir());
+    for ops in [
+        vec![
+            TreeOp::Upsert {
+                path: "p.md".into(),
+                blob,
+            },
+            TreeOp::Upsert {
+                path: "p.md".into(),
+                blob,
+            },
+        ],
+        vec![
+            TreeOp::Remove {
+                path: "README.md".into(),
+            },
+            TreeOp::Upsert {
+                path: "README.md".into(),
+                blob,
+            },
+        ],
+    ] {
+        let result = store.commit_tree(&ops, seed, &who, &who, "m").await;
+        assert!(matches!(result, Err(StoreError::DuplicateTreeOp(_))), "{result:?}");
+    }
+    assert_eq!(count_objects(store.dir()), objects_before, "nothing written");
+}
+
+#[tokio::test]
+async fn commit_tree_rejects_bad_paths_in_any_op() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let seed = commit_files(&up, BRANCH, &[("README.md", "x\n")], "seed");
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let who = signer("alice");
+    let ops = [TreeOp::Remove { path: "a\0.md".into() }];
+    let result = store.commit_tree(&ops, seed, &who, &who, "m").await;
+    assert!(matches!(result, Err(StoreError::Path(PathError::Nul(_)))));
+}
+
+fn count_objects(dir: &Path) -> usize {
+    fn walk(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .expect("read_dir")
+            .map(|entry| {
+                let path = entry.expect("entry").path();
+                if path.is_dir() { walk(&path) } else { 1 }
+            })
+            .sum()
+    }
+    walk(&dir.join("objects"))
+}
