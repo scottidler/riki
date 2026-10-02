@@ -494,3 +494,20 @@ Two follow-ups the coordinator asked for before the release:
 - Fence titles: should the editor keep fence meta (extend Milkdown's code block with a `meta` attribute through parse and serialize), so pages with titled fences become editable? It would move `rewritten/code-fence-style--meta.md` to `canonical/`, a change in what the round-trip guard accepts.
 - Desktop eyebrow: keep the full trail (Home > Guides > Page), or show only the section, as Mintlify does?
 - Font subsets: is latin + latin-ext enough for the content riki will hold, or should Greek / Cyrillic subsets ship too (about 20 KB each)?
+
+## Phase 8b follow-up: open questions resolved (supersedes the Phase 8b open questions above)
+
+### Design decisions
+- Fence titles: parked, not fixed in this release; the fix is recorded in the design doc's Non-Goals parked table (Scott).
+- Desktop eyebrow keeps the full trail (Home > Section > Page) (Scott: defaults kept).
+- Fonts ship latin + latin-ext only (Scott: defaults kept).
+- Editor syntax colors: parked with its fix in the Non-Goals parked table (Scott).
+
+### Deviations
+None.
+
+### Tradeoffs
+None.
+
+### Open questions
+None.
