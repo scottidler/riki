@@ -25,6 +25,9 @@ export function guardStateFor(verdict: GuardVerdict): GuardState {
   return verdict.identical ? 'passed' : 'refused'
 }
 
+/** Marks the header controls a session hid, so closing it shows exactly those again. */
+const HIDDEN_WHILE_EDITING = 'data-riki-hidden-while-editing'
+
 export interface PageTarget {
   /** Repo path of the file, e.g. `a/b.md`. */
   path: string
@@ -44,6 +47,7 @@ export class Session {
   #hooks: SessionHooks
   #article: HTMLElement
   #container: HTMLElement | null = null
+  #bar: HTMLElement | null = null
   #status: HTMLElement | null = null
   #saveButton: HTMLButtonElement | null = null
   #toolbar: Toolbar | null = null
@@ -101,6 +105,12 @@ export class Session {
     await this.#editor?.destroy()
     this.#editor = null
     this.#toolbar = null
+    this.#bar?.remove()
+    this.#bar = null
+    for (const el of document.querySelectorAll<HTMLElement>(`[${HIDDEN_WHILE_EDITING}]`)) {
+      el.hidden = false
+      el.removeAttribute(HIDDEN_WHILE_EDITING)
+    }
     this.#container?.remove()
     this.#container = null
     this.#status = null
@@ -108,20 +118,38 @@ export class Session {
   }
 
   async #mount(markdown: string): Promise<void> {
+    // Cancel / Save take the header's Edit slot (the Edit button hides meanwhile); the sticky
+    // head above the page holds the toolbar and the status line.
     const container = document.createElement('div')
     container.className = 'riki-editor'
+    const head = document.createElement('div')
+    head.className = 'riki-editor-head'
     const bar = document.createElement('div')
     bar.className = 'riki-editor-bar'
     const status = document.createElement('span')
     status.className = 'riki-status'
     status.setAttribute('role', 'status')
-    const save = button('save', 'Save', () => void this.#save())
+    const save = button('save', 'Save', () => void this.#save(), 'riki-button riki-button-primary')
     save.disabled = true
     const cancel = button('cancel', 'Cancel', () => void this.close())
-    bar.append(status, save, cancel)
+    bar.append(cancel, save)
+    head.append(status)
+    const slot = document.querySelector<HTMLElement>('header .actions')
+    if (slot) {
+      for (const el of slot.children) {
+        if (el instanceof HTMLElement && !el.hidden) {
+          el.hidden = true
+          el.setAttribute(HIDDEN_WHILE_EDITING, '')
+        }
+      }
+      slot.append(bar)
+    } else {
+      head.append(bar)
+    }
+    this.#bar = bar
     const root = document.createElement('div')
     root.className = 'riki-editor-root'
-    container.append(bar, root)
+    container.append(head, root)
     this.#article.hidden = true
     this.#article.after(container)
     this.#container = container
@@ -134,7 +162,7 @@ export class Session {
       .create()
     this.#editor = editor
     this.#toolbar = buildToolbar(editor)
-    bar.after(this.#toolbar.element)
+    head.prepend(this.#toolbar.element)
   }
 
   #markdown(): string {
@@ -224,9 +252,10 @@ export class Session {
   }
 }
 
-function button(control: string, label: string, onClick: () => void): HTMLButtonElement {
+function button(control: string, label: string, onClick: () => void, className = 'riki-button'): HTMLButtonElement {
   const el = document.createElement('button')
   el.type = 'button'
+  el.className = className
   el.dataset['control'] = control
   el.textContent = label
   el.addEventListener('click', onClick)

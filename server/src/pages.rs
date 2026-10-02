@@ -3,11 +3,11 @@
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use riki_core::index::{RESERVED, url_for_file};
+use riki_core::index::{PageNode, RESERVED, url_for_file};
 use riki_core::render::{encode_path, render_markdown};
 use tracing::{debug, error, warn};
 
-use crate::render::{self, Action, CSP_ASSET, CSP_PAGE};
+use crate::render::{self, Action, CSP_ASSET, CSP_PAGE, PageView};
 use crate::routes::AppState;
 
 /// Image types `/_riki/raw/` serves, with their content types. Anything else is a 404.
@@ -78,9 +78,17 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
         return error_response(StatusCode::SERVICE_UNAVAILABLE, "No content has been published yet.");
     };
     let banners = render::banners(state.wiki.rejected().as_ref(), state.wiki.unreachable().as_ref());
-    let sidebar = render::sidebar(index.tree(), path);
+    let tree = index.tree();
+    let sidebar = render::sidebar(tree, path);
+    let chrome = Chrome {
+        tree,
+        path,
+        site_title: site_title(tree),
+        sidebar: &sidebar,
+        banners: &banners,
+    };
     let Some(file) = index.file_for_url(path) else {
-        return missing(path, &banners, &sidebar);
+        return missing(&chrome);
     };
     let source = match state.wiki.store().read_blob(index.commit(), file).await {
         Ok(Some(blob)) => blob,
@@ -93,7 +101,7 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "Could not read that page.");
         }
     };
-    let body = render_markdown(file, &String::from_utf8_lossy(&source));
+    let rendered = render_markdown(file, &String::from_utf8_lossy(&source));
     let source_url = state
         .github_blob_base
         .as_deref()
@@ -102,10 +110,37 @@ async fn page_at(state: &AppState, raw_path: &str) -> Response {
         file,
         source: source_url.as_deref(),
     };
+    let title = index
+        .node(path)
+        .and_then(|node| node.title.clone())
+        .unwrap_or_else(|| last_segment(path));
     html_response(
         StatusCode::OK,
-        render::page(&title(path), &body, &sidebar, &banners, action),
+        render::page(&PageView {
+            title: &title,
+            site_title: chrome.site_title,
+            body_html: &rendered.html,
+            toc: &rendered.toc,
+            sidebar_html: chrome.sidebar,
+            breadcrumbs_html: &render::breadcrumbs(tree, path, &title),
+            banners_html: chrome.banners,
+            action,
+        }),
     )
+}
+
+/// The parts of a page every response at `path` shares.
+struct Chrome<'a> {
+    tree: &'a PageNode,
+    path: &'a str,
+    site_title: &'a str,
+    sidebar: &'a str,
+    banners: &'a str,
+}
+
+/// The wiki's name in the header: the home page's first `# heading`, else `riki`.
+fn site_title(tree: &PageNode) -> &str {
+    tree.title.as_deref().unwrap_or("riki")
 }
 
 /// `/a/b.md` -> 301 `/a/b`; `/a/README.md` -> `/a`.
@@ -117,7 +152,8 @@ fn redirect_to_page(file: &str) -> Response {
 
 /// A 404. Paths riki's own routes own never offer "Create this page". The homepage `/` creates
 /// `README.md`; any other page `/a/b` creates `a/b.md`.
-fn missing(path: &str, banners: &str, sidebar: &str) -> Response {
+fn missing(chrome: &Chrome<'_>) -> Response {
+    let path = chrome.path;
     let top = path.split('/').next().unwrap_or_default();
     let file = new_page_file(path);
     let creatable = !RESERVED.contains(&top) && riki_core::path::validate(&file).is_ok();
@@ -131,7 +167,16 @@ fn missing(path: &str, banners: &str, sidebar: &str) -> Response {
     };
     html_response(
         StatusCode::NOT_FOUND,
-        render::page("Not found", &body, sidebar, banners, action),
+        render::page(&PageView {
+            title: "Not found",
+            site_title: chrome.site_title,
+            body_html: &body,
+            toc: &[],
+            sidebar_html: chrome.sidebar,
+            breadcrumbs_html: &render::breadcrumbs(chrome.tree, path, &last_segment(path)),
+            banners_html: chrome.banners,
+            action,
+        }),
     )
 }
 
@@ -144,7 +189,8 @@ fn new_page_file(path: &str) -> String {
     }
 }
 
-fn title(path: &str) -> String {
+/// The title of a page with no `# heading`: its last URL segment (`Home` for the root).
+fn last_segment(path: &str) -> String {
     match path.rsplit('/').next() {
         Some(last) if !last.is_empty() => last.to_string(),
         _ => "Home".to_string(),

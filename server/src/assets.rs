@@ -1,6 +1,7 @@
-//! `GET /_riki/assets/{name}`: the editor bundle and its stylesheet, compiled into the binary.
-//! Both are built from `editor/` and committed under `server/assets/`; otto's `editor` task fails
-//! when the committed files differ from a fresh build.
+//! `GET /_riki/assets/{name}`: the page stylesheet and script, the editor bundle, and its
+//! stylesheet, compiled into the binary. All four are built from `editor/` and committed under
+//! `server/assets/`; otto's `editor` task fails when the committed files differ from a fresh
+//! build.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::OnceLock;
@@ -17,6 +18,16 @@ pub struct Asset {
 }
 
 pub const ASSETS: &[Asset] = &[
+    Asset {
+        name: "riki.css",
+        content_type: "text/css; charset=utf-8",
+        bytes: include_bytes!("../assets/riki.css"),
+    },
+    Asset {
+        name: "riki.js",
+        content_type: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../assets/riki.js"),
+    },
     Asset {
         name: "editor.js",
         content_type: "text/javascript; charset=utf-8",

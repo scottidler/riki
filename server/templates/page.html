@@ -3,40 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ - riki</title>
+<meta name="color-scheme" content="light dark">
+<title>__TITLE__ - __SITE__</title>
+<link rel="stylesheet" href="/_riki/assets/riki.css">
 <link rel="stylesheet" href="/_riki/assets/editor.css">
+<script src="/_riki/assets/riki.js"></script>
 <script src="/_riki/assets/editor.js" defer></script>
-<style>
-body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #1f2328; display: flex; flex-direction: column; min-height: 100vh; }
-header { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 1.5rem; border-bottom: 1px solid #d0d7de; }
-header a.brand { font-weight: 600; color: inherit; text-decoration: none; }
-.banner { padding: 0.6rem 1.5rem; background: #fff8c5; border-bottom: 1px solid #d4a72c; }
-.banner.error { background: #ffebe9; border-color: #cf222e; }
-.layout { display: flex; flex: 1; }
-nav { width: 16rem; padding: 1rem 1.5rem; border-right: 1px solid #d0d7de; }
-nav ul { list-style: none; margin: 0; padding-left: 1rem; }
-nav > ul { padding-left: 0; }
-nav a.current { font-weight: 600; }
-main { flex: 1; max-width: 52rem; padding: 1rem 2rem; }
-pre, code { background: #f6f8fa; border-radius: 4px; }
-pre { padding: 0.8rem; overflow-x: auto; }
-table { border-collapse: collapse; }
-td, th { border: 1px solid #d0d7de; padding: 0.3rem 0.6rem; }
-img { max-width: 100%; }
-.markdown-alert { padding: 0.5rem 1rem; margin: 1rem 0; border-left: 4px solid #0969da; background: #f6f8fa; }
-.markdown-alert-title { font-weight: 600; margin: 0; }
-.markdown-alert-tip { border-color: #1a7f37; }
-.markdown-alert-important { border-color: #8250df; }
-.markdown-alert-warning { border-color: #9a6700; }
-.markdown-alert-caution { border-color: #cf222e; }
-</style>
 </head>
 <body>
-<header><a class="brand" href="/">riki</a><div class="actions">__ACTION__</div></header>
+<header class="riki-header">
+<button type="button" class="riki-icon-button riki-nav-toggle" data-riki-toggle="nav" aria-label="Show pages" aria-controls="riki-nav" aria-expanded="false"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg></button>
+<a class="riki-brand" href="/"><svg class="riki-logo" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="1.5" y="1.5" width="21" height="21" rx="6.5"/><path d="M8.75 17.25v-10.5h4a3.25 3.25 0 0 1 0 6.5h-4m4 0 3.5 4"/></svg><span>__SITE__</span></a>
+<div class="riki-header-end">
+<div class="actions">__ACTION__</div>
+<button type="button" class="riki-icon-button riki-theme-toggle" data-riki-toggle="theme" aria-label="Toggle dark mode"><svg class="riki-sun" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="10" cy="10" r="3.25"/><path d="M10 2.25v1.5M10 16.25v1.5M2.25 10h1.5M16.25 10h1.5M4.5 4.5l1.06 1.06M14.44 14.44l1.06 1.06M4.5 15.5l1.06-1.06M14.44 5.56l1.06-1.06"/></svg><svg class="riki-moon" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M16.25 12.1A6.75 6.75 0 0 1 7.9 3.75a6.75 6.75 0 1 0 8.35 8.35Z"/></svg></button>
+</div>
+</header>
 __BANNERS__
-<div class="layout">
-<nav>__SIDEBAR__</nav>
-<main><article>__BODY__</article></main>
+<div class="riki-layout">
+<nav class="riki-sidebar" id="riki-nav" aria-label="Pages">__SIDEBAR__</nav>
+<div class="riki-scrim" data-riki-toggle="nav"></div>
+<main class="riki-main">
+<div class="riki-content">
+__BREADCRUMBS__
+<article class="riki-prose">__BODY__</article>
+</div>
+__TOC__
+</main>
 </div>
 </body>
 </html>

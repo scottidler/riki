@@ -134,3 +134,20 @@ fn save_settings_come_from_the_committer_and_git_config() {
     assert_eq!(settings.committer.email, "bot@example.com");
     assert_eq!(settings.push_retries, 3);
 }
+
+#[test]
+fn a_503_is_a_warning_and_other_server_errors_stay_errors() {
+    use tower_http::classify::ServerErrorsFailureClass as Class;
+    assert_eq!(
+        failure_level(&Class::StatusCode(StatusCode::SERVICE_UNAVAILABLE)),
+        Level::WARN
+    );
+    for code in [
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::BAD_GATEWAY,
+        StatusCode::GATEWAY_TIMEOUT,
+    ] {
+        assert_eq!(failure_level(&Class::StatusCode(code)), Level::ERROR, "{code}");
+    }
+    assert_eq!(failure_level(&Class::Error("io".to_string())), Level::ERROR);
+}

@@ -95,6 +95,35 @@ async fn fetch_then_read_blob_by_path() {
 }
 
 #[tokio::test]
+async fn read_blobs_returns_the_present_files_in_one_pass() {
+    let tmp = TempDir::new().expect("tmp");
+    let up = upstream(&tmp);
+    let commit = commit_files(
+        &up,
+        BRANCH,
+        &[("README.md", "# home\n"), ("a/b/c.md", "deep\n")],
+        "seed",
+    );
+    let store = GitStore::open(&config(&tmp, file_url(&up))).await.expect("open");
+    store.fetch(&store.lock().await).await.expect("fetch");
+    let files = ["a/b/c.md", "missing.md", "a/b", "README.md"]
+        .map(String::from)
+        .to_vec();
+    assert_eq!(
+        store.read_blobs(commit, files).await.expect("read"),
+        [
+            ("a/b/c.md".to_string(), b"deep\n".to_vec()),
+            ("README.md".to_string(), b"# home\n".to_vec()),
+        ],
+        "absent paths and trees are left out"
+    );
+    assert!(matches!(
+        store.read_blobs(commit, vec!["../x.md".to_string()]).await,
+        Err(StoreError::Path(PathError::DotDot(_)))
+    ));
+}
+
+#[tokio::test]
 async fn read_blob_rejects_bad_paths_with_typed_errors() {
     let tmp = TempDir::new().expect("tmp");
     let up = upstream(&tmp);

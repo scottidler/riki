@@ -131,7 +131,19 @@ impl Wiki {
             return Ok(index.clone());
         }
         let paths = self.store.blob_paths(commit).await?;
-        let index = Arc::new(NavIndex::build(commit, paths));
+        let index = NavIndex::build(commit, paths);
+        let files = index.pages().map(|(_, file)| file.to_string()).collect();
+        let titles: HashMap<String, Option<String>> = self
+            .store
+            .read_blobs(commit, files)
+            .await?
+            .into_iter()
+            .map(|(file, bytes)| {
+                let title = crate::render::page_title(&String::from_utf8_lossy(&bytes));
+                (file, title)
+            })
+            .collect();
+        let index = Arc::new(index.with_titles(|file| titles.get(file).cloned().flatten()));
         self.indexes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

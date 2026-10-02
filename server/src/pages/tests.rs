@@ -104,7 +104,10 @@ async fn md_urls_redirect_permanently_to_the_page() {
 async fn pages_show_the_sidebar_and_an_edit_button() {
     let fx = wiki_with(&[("README.md", "# home\n"), ("a/b.md", "b\n")]).await;
     let html = get(&fx.wiki, "/a/b").await.text();
-    assert!(html.contains(r#"<a href="/a/b" class="current">b</a>"#), "{html}");
+    assert!(
+        html.contains(r#"<a href="/a/b" class="current" aria-current="page">b</a>"#),
+        "{html}"
+    );
     assert!(html.contains("id=\"riki-edit\""), "{html}");
 }
 
@@ -273,4 +276,73 @@ async fn page_html_is_safe_mode() {
     let html = get(&fx.wiki, "/").await.text();
     assert!(!html.contains("<script>alert"), "{html}");
     assert!(!html.contains("javascript:"), "{html}");
+}
+
+#[tokio::test]
+async fn titles_come_from_each_pages_first_heading() {
+    let fx = wiki_with(&[
+        ("README.md", "# Platform Handbook\n\nWelcome.\n"),
+        (
+            "guide/setup.md",
+            "---\nx: 1\n---\n# Setup guide\n\n## Install\n\n### Linux\n",
+        ),
+        ("guide/services.md", "# Service catalog\n"),
+    ])
+    .await;
+    let html = get(&fx.wiki, "/guide/setup").await.text();
+    assert!(
+        html.contains("<title>Setup guide - Platform Handbook</title>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span>Platform Handbook</span></a>"),
+        "the site title: {html}"
+    );
+    assert!(
+        html.contains(r#">Service catalog</a>"#),
+        "sidebar labels are titles: {html}"
+    );
+    assert!(
+        html.contains(r#"<li aria-current="page">Setup guide</li>"#),
+        "breadcrumbs end at the page: {html}"
+    );
+    assert!(
+        html.contains(r##"<li class="riki-toc-h2"><a href="#install">Install</a></li>"##),
+        "{html}"
+    );
+    assert!(
+        html.contains(r##"<li class="riki-toc-h3"><a href="#linux">Linux</a></li>"##),
+        "{html}"
+    );
+    assert_eq!(html.matches(r#"href="/guide/setup""#).count(), 1, "{html}");
+}
+
+#[tokio::test]
+async fn a_page_without_a_heading_is_titled_by_its_segment_and_the_site_falls_back_to_riki() {
+    let fx = wiki_with(&[("README.md", "no heading\n"), ("notes.md", "plain\n")]).await;
+    let html = get(&fx.wiki, "/notes").await.text();
+    assert!(html.contains("<title>notes - riki</title>"), "{html}");
+}
+
+#[tokio::test]
+async fn code_on_a_page_is_highlighted_server_side() {
+    let fx = wiki_with(&[("README.md", "```bash\necho hi\n```\n")]).await;
+    let html = get(&fx.wiki, "/").await.text();
+    assert!(
+        html.contains(r#"<pre class="syntax-highlighting"><code class="language-bash">"#),
+        "{html}"
+    );
+    assert!(html.contains(r#"class="hl-"#), "{html}");
+}
+
+#[tokio::test]
+async fn a_missing_page_keeps_the_sidebar_and_breadcrumbs() {
+    let fx = wiki_with(&[("README.md", "# Home page\n"), ("guide/setup.md", "# Setup\n")]).await;
+    let html = get(&fx.wiki, "/guide/nope").await.text();
+    assert!(html.contains(r#"href="/guide/setup""#), "{html}");
+    assert!(
+        html.contains(r#"<li>guide</li><li aria-current="page">nope</li>"#),
+        "{html}"
+    );
+    assert!(html.contains("<title>Not found - Home page</title>"), "{html}");
 }

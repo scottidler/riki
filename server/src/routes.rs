@@ -13,8 +13,11 @@ use riki_core::runtime::{
 use riki_core::save::SaveSettings;
 use riki_core::store::Signer;
 use riki_core::wiki::Wiki;
+use std::time::Duration;
+
+use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::trace::TraceLayer;
-use tracing::debug;
+use tracing::{Level, Span, debug, error, warn};
 
 use crate::config::{CommitterConfig, GitConfig, IdentityConfig};
 use crate::{api, assets, pages};
@@ -93,8 +96,29 @@ pub fn router(state: AppState) -> Router {
         .merge(api::router())
         .route("/", get(pages::root))
         .route("/{*path}", get(pages::page))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().on_failure(on_failure))
         .with_state(state)
+}
+
+/// How loud a failed response is. A 503 is a state riki already reports (no content yet, upstream
+/// unreachable, push timed out) and logs at WARN where it is decided; every other server error is
+/// an ERROR.
+pub fn failure_level(class: &ServerErrorsFailureClass) -> Level {
+    match class {
+        ServerErrorsFailureClass::StatusCode(StatusCode::SERVICE_UNAVAILABLE) => Level::WARN,
+        _ => Level::ERROR,
+    }
+}
+
+fn on_failure(class: ServerErrorsFailureClass, latency: Duration, span: &Span) {
+    span.in_scope(|| {
+        let latency = format!("{} ms", latency.as_millis());
+        if failure_level(&class) == Level::WARN {
+            warn!(classification = %class, %latency, "response failed");
+        } else {
+            error!(classification = %class, %latency, "response failed");
+        }
+    });
 }
 
 async fn health() -> Json<HealthResponse> {

@@ -1,31 +1,128 @@
-/* riki editor UI. Served as /_riki/assets/editor.css; the page's own styles are inline. */
+/* riki editor chrome, served as /_riki/assets/editor.css: the toolbar, Save / Cancel, the status
+ * line, and the link tooltip. Page content (headings, tables, alerts, code) is styled by the
+ * page stylesheet's `.riki-prose` rules, which the editor's ProseMirror root carries too. Uses the
+ * page stylesheet's custom properties. */
 @import '@milkdown/kit/prose/view/style/prosemirror.css';
 @import '@milkdown/kit/prose/tables/style/tables.css';
 @import '@milkdown/kit/prose/gapcursor/style/gapcursor.css';
 
-.riki-notice { margin: 1rem 0; padding: 0.6rem 1rem; background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; }
-.riki-editor { margin: 1rem 0; }
-.riki-editor-bar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
-.riki-status { flex: 1; color: #59636e; }
-.riki-toolbar { display: flex; flex-wrap: wrap; gap: 0.25rem; padding: 0.4rem; border: 1px solid #d0d7de; border-bottom: none; border-radius: 6px 6px 0 0; background: #f6f8fa; }
-.riki-toolbar button, .riki-toolbar select, .riki-editor-bar button { font: inherit; font-size: 0.9rem; padding: 0.15rem 0.5rem; border: 1px solid #d0d7de; border-radius: 4px; background: #fff; cursor: pointer; }
-.riki-toolbar [disabled], .riki-editor-bar [disabled] { opacity: 0.5; cursor: default; }
-.riki-toolbar [data-control="bold"] { font-weight: 700; }
-.riki-toolbar [data-control="italic"] { font-style: italic; }
-.riki-toolbar [data-control="strike"] { text-decoration: line-through; }
-.riki-editor-root { border: 1px solid #d0d7de; border-radius: 0 0 6px 6px; padding: 0 1rem; min-height: 12rem; }
-.riki-editor-root .ProseMirror { outline: none; min-height: 12rem; }
-.riki-editor-root .ProseMirror[contenteditable="false"] { color: #59636e; }
+.riki-notice {
+  margin: 0 0 1.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--riki-warning) 30%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--riki-warning) 8%, var(--riki-bg));
+  color: var(--riki-text-strong);
+  font-size: 0.9rem;
+}
+.riki-notice a, .riki-status a { color: var(--riki-accent); font-weight: 550; }
 
-.riki-editor-root .markdown-alert::before { content: attr(data-kind); display: block; font-weight: 600; font-size: 0.85rem; }
-.riki-editor-root li[data-item-type="task"] { list-style: none; position: relative; padding-left: 1.6rem; margin-left: -1.6rem; cursor: default; }
-.riki-editor-root li[data-item-type="task"]::before { content: "\2610"; position: absolute; left: 0.2rem; }
-.riki-editor-root li[data-item-type="task"][data-checked="true"]::before { content: "\2611"; }
+.riki-editor { margin: 0; }
 
-.milkdown-link-edit, .milkdown-link-preview { position: absolute; z-index: 10; background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 0.3rem; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); }
+.riki-editor-head {
+  position: sticky;
+  top: calc(var(--riki-header-h) + 0.75rem);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: -0.75rem -0.75rem 1.75rem;
+  padding: 0.375rem;
+  border: 1px solid var(--riki-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--riki-bg-raised) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--riki-shadow-lg);
+}
+.riki-editor-bar { display: flex; gap: 0.5rem; align-items: center; }
+
+.riki-status {
+  padding: 0.125rem 0.375rem 0.25rem;
+  color: var(--riki-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.riki-status:empty { display: none; }
+.riki-status .riki-button { height: 1.75rem; margin-left: 0.25rem; padding: 0 0.625rem; font-size: 0.8125rem; }
+
+.riki-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; min-width: 0; }
+.riki-toolbar button, .riki-toolbar select {
+  height: 2rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--riki-text-muted);
+  font: 500 0.8125rem/1 var(--riki-font);
+  cursor: pointer;
+  transition: background-color 100ms, color 100ms;
+}
+.riki-toolbar button { display: inline-grid; place-items: center; min-width: 1.875rem; padding: 0 0.3rem; }
+.riki-toolbar button.riki-toolbar-text { display: inline-flex; gap: 0.3rem; padding: 0 0.5rem 0 0.4rem; }
+.riki-toolbar select {
+  padding: 0 1.5rem 0 0.5rem;
+  appearance: none;
+  -webkit-appearance: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b93a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4.5 6.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E") right 0.4rem center / 0.875rem no-repeat;
+  color: var(--riki-text-strong);
+}
+.riki-toolbar select option { background: var(--riki-bg-raised); color: var(--riki-text-strong); }
+.riki-toolbar svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.riki-toolbar [data-control="bold"] svg { stroke-width: 1.9; }
+.riki-toolbar button:hover:not([disabled]), .riki-toolbar select:hover:not([disabled]) {
+  background-color: var(--riki-surface-strong);
+  color: var(--riki-text-strong);
+}
+.riki-toolbar [disabled] { opacity: 0.45; cursor: default; }
+.riki-toolbar-divider { width: 1px; height: 1.25rem; margin: 0 0.2rem; background: var(--riki-border); }
+
+/* The editable page: the same box as the article it replaces. */
+.riki-editor-root { position: relative; }
+.riki-editor-root .ProseMirror { min-height: 12rem; outline: none; caret-color: var(--riki-accent); }
+.riki-editor-root .ProseMirror[contenteditable="false"] { opacity: 0.72; }
+.riki-editor-root .ProseMirror pre { white-space: pre; }
+.riki-editor-root .ProseMirror > table { display: block; width: fit-content; max-width: 100%; table-layout: auto; overflow-x: auto; }
+.riki-editor-root .ProseMirror .selectedCell::after { background: color-mix(in srgb, var(--riki-accent) 14%, transparent); }
+.riki-editor-root .ProseMirror .column-resize-handle { background-color: var(--riki-accent); }
+.riki-editor-root .markdown-alert-title { user-select: none; }
+.riki-editor-root li[data-item-type="task"] { cursor: default; }
+.riki-editor-root .ProseMirror-selectednode { outline: 2px solid var(--riki-focus); outline-offset: 2px; border-radius: 6px; }
+
+.milkdown-link-edit, .milkdown-link-preview {
+  position: absolute;
+  z-index: 50;
+  padding: 0.375rem;
+  border: 1px solid var(--riki-border);
+  border-radius: 12px;
+  background: var(--riki-bg-raised);
+  color: var(--riki-text);
+  box-shadow: var(--riki-shadow-lg);
+  font-size: 0.875rem;
+}
 .milkdown-link-edit[data-show="false"], .milkdown-link-preview[data-show="false"] { display: none; }
-.milkdown-link-edit .link-edit { display: flex; gap: 0.3rem; align-items: center; }
-.milkdown-link-edit .input-area { font: inherit; min-width: 18rem; padding: 0.2rem 0.4rem; }
-.milkdown-link-preview .link-preview { display: flex; gap: 0.4rem; align-items: center; }
-.milkdown-icon { cursor: pointer; display: inline-flex; }
-.milkdown-icon svg { width: 1.1rem; height: 1.1rem; }
+.milkdown-link-edit .link-edit { display: flex; gap: 0.375rem; align-items: center; }
+.milkdown-link-edit .input-area {
+  min-width: 18rem;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid var(--riki-border-strong);
+  border-radius: 8px;
+  background: var(--riki-bg);
+  color: var(--riki-text-strong);
+  font: inherit;
+  outline: none;
+}
+.milkdown-link-edit .input-area:focus { border-color: var(--riki-accent); box-shadow: 0 0 0 3px var(--riki-focus); }
+.milkdown-link-preview .link-preview { display: flex; gap: 0.5rem; align-items: center; padding: 0 0.25rem; }
+.milkdown-link-preview .link-display { color: var(--riki-accent); text-decoration: none; }
+.milkdown-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 7px;
+  color: var(--riki-text-muted);
+  cursor: pointer;
+}
+.milkdown-icon:hover { background: var(--riki-surface-strong); color: var(--riki-text-strong); }
+.milkdown-icon svg { width: 1.1rem; height: 1.1rem; fill: currentColor; }

@@ -1,4 +1,5 @@
-// Bundle the editor into the two files the riki binary embeds. Deterministic output: the
+// Bundle the page script, the page stylesheet, the editor, and the editor's stylesheet into the
+// four files the riki binary embeds. Deterministic output: the
 // committed bundle must equal a fresh build (otto `editor` diffs them).
 import { build } from 'esbuild'
 
@@ -24,4 +25,17 @@ await build({
   ...common,
   entryPoints: ['src/editor.css'],
   outfile: '../server/assets/editor.css',
+})
+
+await build({
+  ...common,
+  entryPoints: ['src/page/main.ts'],
+  outfile: '../server/assets/riki.js',
+  format: 'iife',
+})
+
+await build({
+  ...common,
+  entryPoints: ['src/theme/riki.css'],
+  outfile: '../server/assets/riki.css',
 })

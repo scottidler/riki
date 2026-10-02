@@ -262,6 +262,31 @@ impl GitStore {
         .await
     }
 
+    /// The blobs at `files` in `commit`, in one blocking task, as `(file, bytes)`. Files that are
+    /// absent or not blobs are left out. Every path is validated first.
+    pub async fn read_blobs(&self, commit: Oid, files: Vec<String>) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
+        for file in &files {
+            path::validate(file)?;
+        }
+        self.blocking(move |repo| {
+            let tree = repo.find_commit(commit)?.tree()?;
+            let mut out = Vec::with_capacity(files.len());
+            for file in files {
+                let entry = match tree.get_path(Path::new(&file)) {
+                    Ok(entry) => entry,
+                    Err(err) if err.code() == ErrorCode::NotFound => continue,
+                    Err(err) => return Err(err.into()),
+                };
+                if entry.kind() == Some(ObjectType::Blob) {
+                    let bytes = repo.find_blob(entry.id())?.content().to_vec();
+                    out.push((file, bytes));
+                }
+            }
+            Ok(out)
+        })
+        .await
+    }
+
     /// The blob with id `oid`, or `None` when the object DB has no such blob.
     pub async fn blob(&self, oid: Oid) -> Result<Option<Vec<u8>>, StoreError> {
         self.blocking(move |repo| match repo.find_blob(oid) {

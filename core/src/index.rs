@@ -38,6 +38,8 @@ pub struct PageNode {
     pub url: String,
     /// The `.md` file served at `url`, if any.
     pub file: Option<String>,
+    /// The page's first `# heading`, once [`NavIndex::with_titles`] has read the blobs.
+    pub title: Option<String>,
     /// Children keyed by URL segment, so iteration is sorted.
     pub children: BTreeMap<String, PageNode>,
 }
@@ -134,6 +136,31 @@ impl NavIndex {
     pub fn tree(&self) -> &PageNode {
         &self.tree
     }
+
+    /// Attach page titles: `title_of(file)` for every page in the tree.
+    pub fn with_titles(mut self, title_of: impl Fn(&str) -> Option<String>) -> Self {
+        set_titles(&mut self.tree, &title_of);
+        self
+    }
+
+    /// The node at `url` (no leading `/`; `""` is the root).
+    pub fn node(&self, url: &str) -> Option<&PageNode> {
+        let mut node = &self.tree;
+        if url.is_empty() {
+            return Some(node);
+        }
+        for segment in url.split('/') {
+            node = node.children.get(segment)?;
+        }
+        Some(node)
+    }
+}
+
+fn set_titles(node: &mut PageNode, title_of: &impl Fn(&str) -> Option<String>) {
+    node.title = node.file.as_deref().and_then(title_of);
+    for child in node.children.values_mut() {
+        set_titles(child, title_of);
+    }
 }
 
 /// Every index error on one line, for the banner and `/status`.
@@ -219,6 +246,22 @@ mod tests {
         assert_eq!(a.file.as_deref(), Some("a/README.md"));
         assert_eq!(a.children["b"].url, "a/b");
         assert_eq!(a.children["b"].file.as_deref(), Some("a/b.md"));
+    }
+
+    #[test]
+    fn titles_attach_to_pages_and_nodes_resolve_by_url() {
+        let index = NavIndex::build(oid(), ["README.md", "a/b.md", "c/x.md"])
+            .with_titles(|file| (file != "c/x.md").then(|| format!("T {file}")));
+        assert_eq!(index.tree().title.as_deref(), Some("T README.md"));
+        assert_eq!(index.node("a/b").and_then(|n| n.title.as_deref()), Some("T a/b.md"));
+        assert_eq!(
+            index.node("c").map(|n| n.title.is_none()),
+            Some(true),
+            "a directory has no title"
+        );
+        assert_eq!(index.node("c/x").map(|n| n.title.is_none()), Some(true));
+        assert!(index.node("nope/deeper").is_none());
+        assert_eq!(index.node("").map(|n| n.url.as_str()), Some(""));
     }
 
     #[test]

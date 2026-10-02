@@ -27,6 +27,46 @@ fn the_committed_bundle_is_embedded() {
     let js = find("editor.js").expect("editor.js");
     assert!(js.bytes.len() > 1000, "editor.js is {} bytes", js.bytes.len());
     assert!(find("editor.css").is_some());
+    for name in ["riki.css", "riki.js"] {
+        let asset = find(name).unwrap_or_else(|| panic!("{name} is embedded"));
+        assert!(asset.bytes.len() > 500, "{name} is {} bytes", asset.bytes.len());
+    }
+}
+
+#[tokio::test]
+async fn serves_the_page_theme_and_script_with_their_types() {
+    let css = send("/_riki/assets/riki.css", None).await;
+    assert_eq!(css.status(), StatusCode::OK);
+    assert_eq!(css.headers()[header::CONTENT_TYPE], "text/css; charset=utf-8");
+    let js = send("/_riki/assets/riki.js", None).await;
+    assert_eq!(js.status(), StatusCode::OK);
+    assert_eq!(js.headers()[header::CONTENT_TYPE], "text/javascript; charset=utf-8");
+}
+
+#[test]
+fn the_theme_styles_the_markup_the_renderer_emits() {
+    let css = std::str::from_utf8(find("riki.css").expect("riki.css").bytes).expect("utf-8");
+    for class in [
+        ".riki-prose",
+        ".markdown-alert-warning",
+        ".riki-alert-icon",
+        ".riki-table",
+        ".hl-keyword",
+        ".hl-string",
+        ".riki-toc",
+        ".riki-sidebar",
+        ".riki-breadcrumbs",
+        "prefers-color-scheme",
+        "[data-theme=",
+    ] {
+        assert!(css.contains(class), "riki.css has no {class}");
+    }
+    assert!(!css.contains("@import"), "riki.css loads nothing else");
+    assert!(
+        !css.contains("http://") || css.matches("http://").count() == css.matches("http://www.w3.org/2000/svg").count(),
+        "no remote URLs"
+    );
+    assert!(!css.contains("https://"), "no remote URLs");
 }
 
 #[tokio::test]

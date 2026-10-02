@@ -43,6 +43,25 @@ declare module 'mdast' {
   }
 }
 
+/** The icon in each alert's title, the same 16x16 paths the server renders
+ *  (`core/src/render.rs:alert_icon_path`), so an alert looks the same read and edited. */
+export const ALERT_ICON_PATHS: Record<AlertKind, string> = {
+  NOTE: 'M8 14.25a6.25 6.25 0 1 0 0-12.5 6.25 6.25 0 0 0 0 12.5ZM8 7.25v4M8 4.75v.01',
+  TIP: 'M6 12.25h4M6.75 14.5h2.5M5.6 10.4a4.25 4.25 0 1 1 4.8 0c-.4.3-.65.75-.65 1.25v.6h-3.5v-.6c0-.5-.25-.95-.65-1.25Z',
+  IMPORTANT:
+    'M2.25 3.25c0-.55.45-1 1-1h9.5c.55 0 1 .45 1 1v7c0 .55-.45 1-1 1H8l-3.25 2.5v-2.5h-1.5c-.55 0-1-.45-1-1ZM8 4.75v2.75M8 9.5v.01',
+  WARNING: 'M7.13 2.5a1 1 0 0 1 1.74 0l5.4 9.5a1 1 0 0 1-.87 1.5H2.6a1 1 0 0 1-.87-1.5ZM8 6.25v3M8 11.25v.01',
+  CAUTION: 'M5.4 1.75h5.2l3.65 3.65v5.2l-3.65 3.65H5.4L1.75 10.6V5.4ZM8 4.75v3.75M8 10.75v.01',
+}
+
+/** The title an alert shows: its own title text, else the kind in comrak's casing (`Warning`). */
+export function alertTitle(kind: AlertKind, title: string): string {
+  const own = title.trim()
+  return own || kind[0] + kind.slice(1).toLowerCase()
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
 export function isAlertKind(value: string): value is AlertKind {
   return (ALERT_KINDS as readonly string[]).includes(value)
 }
@@ -122,18 +141,34 @@ export const alertSchema = $nodeSchema('alert', () => ({
   parseDOM: [
     {
       tag: 'div[data-alert]',
+      contentElement: (dom: Node) =>
+        (dom instanceof HTMLElement ? dom.querySelector<HTMLElement>(':scope > .markdown-alert-body') : null) ??
+        (dom as HTMLElement),
       getAttrs: (dom: HTMLElement) => {
         const kind = dom.dataset['kind'] ?? 'NOTE'
         return { kind, marker: `[!${kind}]` }
       },
     },
   ],
+  // The server's alert markup (title row with icon, then the body), so the shared stylesheet
+  // styles both the same. The title is not part of the document: the `title` attr is.
   toDOM: (node: ProseNode) => {
-    const kind = String(node.attrs['kind'])
+    const raw = String(node.attrs['kind'])
+    const kind: AlertKind = isAlertKind(raw) ? raw : 'NOTE'
     return [
       'div',
       { 'data-alert': '', 'data-kind': kind, class: `markdown-alert markdown-alert-${kind.toLowerCase()}` },
-      0,
+      [
+        'p',
+        { class: 'markdown-alert-title', contenteditable: 'false' },
+        [
+          `${SVG_NS} svg`,
+          { class: 'riki-alert-icon', viewBox: '0 0 16 16', width: '16', height: '16', 'aria-hidden': 'true' },
+          [`${SVG_NS} path`, { d: ALERT_ICON_PATHS[kind] }],
+        ],
+        alertTitle(kind, String(node.attrs['title'] ?? '')),
+      ],
+      ['div', { class: 'markdown-alert-body' }, 0],
     ]
   },
   parseMarkdown: {

@@ -56,6 +56,9 @@ export function stringifyOptions(prev: ToMarkdownOptions): ToMarkdownOptions {
   }
 }
 
+/** The class the rendered article and the editor's content root share (`riki.css`). */
+export const PROSE_CLASS = 'riki-prose'
+
 export interface EditorSetup {
   root: HTMLElement
   markdown: string
@@ -72,7 +75,8 @@ export function makeEditor({ root, markdown, sourceFile, editable }: EditorSetup
     .config((ctx) => {
       ctx.set(rootCtx, root)
       ctx.set(defaultValueCtx, markdown)
-      ctx.update(editorViewOptionsCtx, (prev) => ({ ...prev, editable }))
+      // `riki-prose`: the page stylesheet's content rules, so the editor looks like the page.
+      ctx.update(editorViewOptionsCtx, (prev) => ({ ...prev, editable, attributes: { class: PROSE_CLASS } }))
       ctx.update(remarkStringifyOptionsCtx, stringifyOptions)
     })
     .use(imageTitleFix)

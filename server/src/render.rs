@@ -2,7 +2,7 @@
 //! IO; every value that reaches a template is escaped here or comes from comrak's safe mode.
 
 use riki_core::index::PageNode;
-use riki_core::render::{encode_path, escape_html};
+use riki_core::render::{TocEntry, encode_path, escape_html};
 use riki_core::wiki::{Rejected, Unreachable};
 use tracing::debug;
 
@@ -60,10 +60,26 @@ pub enum Action<'a> {
     Create { file: &'a str },
 }
 
-/// A full page: sidebar, banners, and the rendered body (already safe HTML).
-pub fn page(title: &str, body_html: &str, sidebar_html: &str, banners_html: &str, action: Action<'_>) -> String {
-    debug!("render::page: title={title:?} action={action:?}");
-    let action_html = match action {
+/// Everything a full page shows. Every `_html` field is already safe HTML (comrak's safe mode or
+/// built by this module); plain-text fields are escaped here.
+#[derive(Debug, Clone, Copy)]
+pub struct PageView<'a> {
+    /// The page's own title (its first `# heading`, else its URL segment).
+    pub title: &'a str,
+    /// The wiki's title: the home page's first `# heading`, else `riki`.
+    pub site_title: &'a str,
+    pub body_html: &'a str,
+    pub toc: &'a [TocEntry],
+    pub sidebar_html: &'a str,
+    pub breadcrumbs_html: &'a str,
+    pub banners_html: &'a str,
+    pub action: Action<'a>,
+}
+
+/// A full page: header, sidebar, breadcrumbs, the rendered body, and the "On this page" list.
+pub fn page(view: &PageView<'_>) -> String {
+    debug!("render::page: title={:?} action={:?}", view.title, view.action);
+    let action_html = match view.action {
         Action::Edit { file, source } => {
             let source = source.map_or_else(String::new, |url| format!(r#" data-source="{}""#, escape_html(url)));
             format!(
@@ -80,13 +96,43 @@ pub fn page(title: &str, body_html: &str, sidebar_html: &str, banners_html: &str
     fill(
         PAGE_TEMPLATE,
         &[
-            ("__TITLE__", &escape_html(title)),
+            ("__TITLE__", &escape_html(view.title)),
+            ("__SITE__", &escape_html(view.site_title)),
             ("__ACTION__", &action_html),
-            ("__BANNERS__", banners_html),
-            ("__SIDEBAR__", sidebar_html),
-            ("__BODY__", body_html),
+            ("__BANNERS__", view.banners_html),
+            ("__SIDEBAR__", view.sidebar_html),
+            ("__BREADCRUMBS__", view.breadcrumbs_html),
+            ("__BODY__", view.body_html),
+            ("__TOC__", &toc(view.toc)),
         ],
     )
+}
+
+/// The "On this page" list: every h2 and h3, linked by anchor id. Always present (empty when the
+/// page has no h2 / h3) so the layout does not shift between pages.
+pub fn toc(entries: &[TocEntry]) -> String {
+    if entries.is_empty() {
+        return r#"<aside class="riki-toc" aria-label="On this page"></aside>"#.to_string();
+    }
+    let mut out = String::from(
+        r#"<aside class="riki-toc" aria-label="On this page"><p class="riki-toc-title">On this page</p><ul>"#,
+    );
+    for entry in entries {
+        out.push_str(&format!(
+            r##"<li class="riki-toc-h{}"><a href="#{}">{}</a></li>"##,
+            entry.level,
+            escape_html(&encode_fragment(&entry.id)),
+            escape_html(&entry.text)
+        ));
+    }
+    out.push_str("</ul></aside>");
+    out
+}
+
+/// An anchor id as a URL fragment: ids keep Unicode letters, so percent-encode anything outside
+/// the unreserved set.
+fn encode_fragment(id: &str) -> String {
+    encode_path(id)
 }
 
 /// The self-contained error page: inline style, no scripts, no sidebar, no store access, so it
@@ -121,38 +167,101 @@ pub fn banners(rejected: Option<&Rejected>, unreachable: Option<&Unreachable>) -
     out
 }
 
-/// The sidebar: the page tree as nested lists. A directory with no `README.md` is a label, not a
-/// link. `current` is the URL path of the page being shown (no leading `/`).
+/// The label a node shows: its page title, else its URL segment (`Home` for the root).
+pub fn label<'a>(node: &'a PageNode, segment: &'a str) -> &'a str {
+    match &node.title {
+        Some(title) => title,
+        None if node.url.is_empty() => "Home",
+        None => segment,
+    }
+}
+
+/// The sidebar: the home page and top-level pages as links, then one collapsible section per
+/// directory. A directory with a `README.md` heads its section with a link to it; one without is
+/// a plain label. `current` is the URL path of the page being shown (no leading `/`).
 pub fn sidebar(root: &PageNode, current: &str) -> String {
-    let mut out = String::from("<ul>");
-    out.push_str(&item("Home", root, current));
-    for (segment, child) in &root.children {
-        out.push_str(&item(segment, child, current));
+    let mut out = String::from(r#"<ul class="riki-nav-list">"#);
+    if root.file.is_some() {
+        out.push_str(&format!("<li>{}</li>", link(root, "Home", current)));
+    }
+    for (segment, child) in root.children.iter().filter(|(_, child)| child.children.is_empty()) {
+        out.push_str(&format!("<li>{}</li>", link(child, label(child, segment), current)));
     }
     out.push_str("</ul>");
+    for (segment, child) in root.children.iter().filter(|(_, child)| !child.children.is_empty()) {
+        out.push_str(&section(segment, child, current, true));
+    }
     out
 }
 
-fn item(label: &str, node: &PageNode, current: &str) -> String {
-    let mut out = String::from("<li>");
-    let label = escape_html(label);
-    if node.file.is_some() {
-        let class = if node.url == current { " class=\"current\"" } else { "" };
-        out.push_str(&format!(
-            "<a href=\"/{}\"{class}>{label}</a>",
-            escape_html(&encode_path(&node.url))
-        ));
+fn contains(node: &PageNode, current: &str) -> bool {
+    current == node.url || current.starts_with(&format!("{}/", node.url))
+}
+
+/// A directory as `<details>`: open at the top level and along the path to the current page.
+fn section(segment: &str, node: &PageNode, current: &str, top: bool) -> String {
+    let open = if top || contains(node, current) { " open" } else { "" };
+    let head = if node.file.is_some() {
+        link(node, label(node, segment), current)
     } else {
-        out.push_str(&label);
-    }
-    if !node.children.is_empty() {
-        out.push_str("<ul>");
-        for (segment, child) in &node.children {
-            out.push_str(&item(segment, child, current));
+        format!(r#"<span class="riki-nav-label">{}</span>"#, escape_html(segment))
+    };
+    let mut out =
+        format!(r#"<details class="riki-nav-section"{open}><summary>{head}</summary><ul class="riki-nav-list">"#);
+    for (child_segment, child) in &node.children {
+        if child.children.is_empty() {
+            out.push_str(&format!(
+                "<li>{}</li>",
+                link(child, label(child, child_segment), current)
+            ));
+        } else {
+            out.push_str(&format!("<li>{}</li>", section(child_segment, child, current, false)));
         }
-        out.push_str("</ul>");
     }
-    out.push_str("</li>");
+    out.push_str("</ul></details>");
+    out
+}
+
+fn link(node: &PageNode, label: &str, current: &str) -> String {
+    let here = if node.url == current {
+        r#" class="current" aria-current="page""#
+    } else {
+        ""
+    };
+    format!(
+        "<a href=\"/{}\"{here}>{}</a>",
+        escape_html(&encode_path(&node.url)),
+        escape_html(label)
+    )
+}
+
+/// Breadcrumbs for the page at `path`: Home, then every ancestor directory (a link when it has a
+/// page), then the page itself. Empty on the home page.
+pub fn breadcrumbs(root: &PageNode, path: &str, title: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(r#"<nav class="riki-breadcrumbs" aria-label="Breadcrumb"><ol>"#);
+    out.push_str(r#"<li><a href="/">Home</a></li>"#);
+    let segments: Vec<&str> = path.split('/').collect();
+    let mut node = Some(root);
+    for (i, segment) in segments.iter().enumerate() {
+        node = node.and_then(|n| n.children.get(*segment));
+        if i + 1 == segments.len() {
+            break;
+        }
+        match node {
+            Some(dir) if dir.file.is_some() => out.push_str(&format!(
+                r#"<li><a href="/{}">{}</a></li>"#,
+                escape_html(&encode_path(&dir.url)),
+                escape_html(label(dir, segment))
+            )),
+            Some(dir) => out.push_str(&format!("<li>{}</li>", escape_html(label(dir, segment)))),
+            None => out.push_str(&format!("<li>{}</li>", escape_html(segment))),
+        }
+    }
+    out.push_str(&format!(r#"<li aria-current="page">{}</li>"#, escape_html(title)));
+    out.push_str("</ol></nav>");
     out
 }
 

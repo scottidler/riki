@@ -78,7 +78,7 @@ tasks:
       echo "=== riki-core is still axum-free (OK) ==="
 
   editor:
-    help: "Typecheck, test, and rebuild the editor bundle; fail if the committed server/assets/ bundle is stale"
+    help: "Typecheck, test, and rebuild the editor bundle and page theme; fail if the committed server/assets/ files are stale"
     bash: |
       if ! command -v node >/dev/null 2>&1; then
         echo "ERROR: node is not installed. The editor task needs node to rebuild" >&2
@@ -119,7 +119,7 @@ tasks:
       "${PNPM[@]}" run test
       "${PNPM[@]}" run build
       cd ..
-      if ! git diff --exit-code -- server/assets/editor.js server/assets/editor.css; then
+      if ! git diff --exit-code -- server/assets/editor.js server/assets/editor.css server/assets/riki.js server/assets/riki.css; then
         echo "" >&2
         echo "ERROR: server/assets/ differs from a fresh build of editor/. Commit the rebuilt bundle." >&2
         exit 1
