@@ -22,3 +22,5 @@ target
 
 # editor/ (node) dependencies; the built bundle in server/assets/ is committed
 node_modules/
+/rc
+mutants.out*
