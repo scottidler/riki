@@ -16,4 +16,4 @@ jobs:
   ci:
     uses: scottidler/github-actions/.github/workflows/rust-ci.yml@v1
     with:
-      rust-version: "1.98.0"
+      rust-version: "1.99.1"
