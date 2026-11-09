@@ -28,7 +28,7 @@ use crate::{api, assets, pages};
 const BUILD: Build = Build {
     branch: env!("GIT_BRANCH"),
     revision: env!("GIT_REVISION"),
-    describe: env!("GIT_DESCRIBE"),
+    describe: env!("BUILD_VERSION"),
     git_sha: env!("GIT_SHA"),
 };
 

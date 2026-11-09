@@ -4,7 +4,7 @@ use clap::Parser;
 
 /// Request-time Markdown wiki server backed by a git repo.
 #[derive(Debug, Parser)]
-#[command(name = "riki", version = env!("GIT_DESCRIBE"), about)]
+#[command(name = "riki", version = env!("BUILD_VERSION"), about)]
 pub struct Cli {
     /// Config file (default: $XDG_CONFIG_HOME/riki/riki.yml, i.e. ~/.config/riki/riki.yml)
     #[arg(short, long)]
